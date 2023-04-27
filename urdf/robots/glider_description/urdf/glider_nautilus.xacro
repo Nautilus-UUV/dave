@@ -69,6 +69,7 @@
     </link>
 
     <!-- Set up hydrodynamic plugin -->
+    <!-- ToDO: Get parameters for BCU -->
     <gazebo>
       <plugin name="${namespace}_uuv_plugin" filename="libuuv_underwater_object_ros_plugin.so">
         <fluid_density>${rho}</fluid_density>

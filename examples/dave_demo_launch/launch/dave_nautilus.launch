@@ -64,9 +64,9 @@
         </include>
     </group> -->
     
-    <!-- standard glider : glider_slocum -->
-    <include file="$(find glider_description)/launch/upload_glider_slocum.launch">
-        <arg name="namespace" value="glider_slocum"/>
+    <!-- standard glider : glider_nautilus -->
+    <include file="$(find glider_description)/launch/upload_glider_nautilus.launch">
+        <arg name="namespace" value="glilder_nautilus"/>
         <arg name="x" value="-10"/>
         <arg name="y" value="40"/>
         <arg name="z" value="-56"/>

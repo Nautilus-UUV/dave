@@ -66,13 +66,15 @@
     
     <!-- standard glider : glider_nautilus -->
     <include file="$(find glider_description)/launch/upload_glider_nautilus.launch">
-        <arg name="namespace" value="glilder_nautilus"/>
+        <arg name="namespace" value="glider_nautilus"/>
         <arg name="x" value="-10"/>
         <arg name="y" value="40"/>
         <arg name="z" value="-56"/>
 	<arg name="yaw" value="0.7"/>
 	<arg name="pitch" value="0.4"/>
     </include>
+
+    <include file="$(find mavros_bridge)/launch/mavros_bridge.launch"></include>
 	
 
 </launch>

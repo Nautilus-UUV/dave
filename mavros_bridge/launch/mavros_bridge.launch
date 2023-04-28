@@ -1,0 +1,4 @@
+<launch>
+    <!-- run mavros bridge -->
+    <node pkg="mavros_bridge" type="mavros_bridge.py" name="mavros_bridge" output="screen"/>
+</launch>

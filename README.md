@@ -25,3 +25,7 @@ to use additional glider physics from glider_hybrid_whoi
 3. If the computer is using a discrete nvidia GPU. Install cuda-toolkit by running `sudo apt install nvidia-cuda-toolkit`.
 4. build packages by running `catkin build`
 5. Source workspace by running `source devel/setup.bash`
+
+### Run simulation
+1. Have your workspace correctly sourced (`source /opt/ros/noetic/setup.bash`, `source ~/catkin_ws/devel/setup.bash`)
+2. Run file by running `roslaunch dave_demo_launch dave_nautilus.launch`

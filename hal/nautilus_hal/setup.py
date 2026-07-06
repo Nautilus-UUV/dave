@@ -29,7 +29,6 @@ setup(
             "bcu_sim_bridge = nautilus_hal.bridges.bcu_sim_bridge:main",
             "external_sensor_sim_bridge = nautilus_hal.bridges.external_sensor_sim_bridge:main",
             "imu_sim_bridge = nautilus_hal.bridges.imu_sim_bridge:main",
-            "acu_sim_bridge = nautilus_hal.bridges.acu_sim_bridge:main",
             "gt_pose_bridge = nautilus_hal.bridges.gt_pose_bridge:main",
             "record_throttle = nautilus_hal.bridges.record_throttle:main",
         ],

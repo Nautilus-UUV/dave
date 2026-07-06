@@ -21,13 +21,6 @@ def launch_setup(context, *args, **kwargs):
         f"/model/{namespace}/buoyancy_engine/current_volume@std_msgs/msg/Float64@gz.msgs.Double",
         f"/world/oceans_waves/model/{namespace}/joint_state@sensor_msgs/msg/JointState@gz.msgs.Model",
         f"/world/oceans_waves/model/{namespace}/joint_state@sensor_msgs/msg/JointState@gz.msgs.Model",
-        # The JointPositionController plugins in model.sdf declare an
-        # explicit <topic> rather than using the gz-sim default
-        # ".../0/cmd_pos" (digit-leading path segment, rejected by
-        # ROS 2 topic-name validation). These bridge entries match
-        # what the SDF declares.
-        f"/model/{namespace}/joint/acu_roll_joint/cmd_pos@std_msgs/msg/Float64@gz.msgs.Double", #ACU roll command in radians
-        f"/model/{namespace}/joint/acu_tilt_joint/cmd_pos@std_msgs/msg/Float64@gz.msgs.Double", #ACU tilt command in metres
         f"/{namespace}/sea_pressure@sensor_msgs/msg/FluidPressure@gz.msgs.FluidPressure",
         f"/world/oceans_waves/model/{namespace}/joint_state@sensor_msgs/msg/JointState@gz.msgs.Model",
     ]

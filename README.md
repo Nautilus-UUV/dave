@@ -91,11 +91,16 @@ ros2 launch nautilus_hal sawtooth_sim.launch.py \
     headless:=false \
     mission_autostart:=true \
     target_pressure_pa:=147150.0 \
+    shallow_pressure_pa:=49050.0 \
     angle_rad:=0.6109 \
-    n_resurfaces:=3
+    n_oscillations:=3
 ```
 
-You should see the glider going in a sawtooth motion. You can configure the depth and the number of resurfaces. See the the launch files in the `dave_ws/src/dave/hal/nautilus_hal/launch` for a complete list.
+You should see the glider going in a sawtooth motion between the deep
+(`target_pressure_pa`) and shallow (`shallow_pressure_pa`) pressures, then
+surfacing after `n_oscillations` dives. `shallow_pressure_pa:=0` climbs all the
+way to the surface between dives. See the launch files in
+`dave_ws/src/dave/hal/nautilus_hal/launch` for a complete list.
 
 ### Data Collection
 
@@ -104,8 +109,9 @@ ros2 launch nautilus_hal sawtooth_sim.launch.py \
     headless:=true \
     mission_autostart:=true \
     target_pressure_pa:=147150.0 \
+    shallow_pressure_pa:=49050.0 \
     angle_rad:=0.6109 \
-    n_resurfaces:=3 \
+    n_oscillations:=3 \
     record:=true
 ```
 

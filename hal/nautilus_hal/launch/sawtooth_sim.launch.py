@@ -1,9 +1,10 @@
 """Sawtooth glide sim composition.
 
 Brings up everything needed to drive the simulated glider through one
-or more SAWTOOTH cycles -- a hard descend at -angle_rad to
-target_pressure_pa, then a hard ascend at +angle_rad back to the
-surface, repeated for n_resurfaces cycles before self-terminating:
+or more SAWTOOTH dives -- a hard descend at -angle_rad to
+target_pressure_pa, then a hard ascend at +angle_rad to
+shallow_pressure_pa, repeated for n_oscillations dives before a final
+ascent to the surface and self-terminating:
 
     HAL bridges + Gazebo + glider robot
         + py_pkg control_stack    (imu_prefilter, attitude_node, bcu_node,
@@ -15,11 +16,12 @@ scenario YAML — pass it as launch args:
 
     ros2 launch nautilus_hal sawtooth_sim.launch.py headless:=false \\
         mission_autostart:=true target_pressure_pa:=147150.0 \\
-        angle_rad:=0.6109 n_resurfaces:=1
+        shallow_pressure_pa:=0.0 angle_rad:=0.6109 n_oscillations:=1
 
-The mission self-terminates after `n_resurfaces` resurface events, but
-the launch keeps Gazebo and the controllers running so you can fire
-another mission from the CLI by publishing /path + /command directly.
+The mission self-terminates after `n_oscillations` dives (a final ascent
+to the surface), but the launch keeps Gazebo and the controllers running
+so you can fire another mission from the CLI by publishing /path +
+/command directly.
 """
 
 import os
@@ -143,8 +145,9 @@ def generate_launch_description():
             "mission_autostart": LaunchConfiguration("mission_autostart"),
             "mission_id": str(_MISSION_ID_SAWTOOTH),
             "target_pressure_pa": LaunchConfiguration("target_pressure_pa"),
+            "shallow_pressure_pa": LaunchConfiguration("shallow_pressure_pa"),
             "angle_rad": LaunchConfiguration("angle_rad"),
-            "n_resurfaces": LaunchConfiguration("n_resurfaces"),
+            "n_oscillations": LaunchConfiguration("n_oscillations"),
         }.items(),
     )
 
@@ -182,6 +185,15 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument(
+                "shallow_pressure_pa",
+                default_value="0.0",
+                description=(
+                    "Shallow extremum in gauge Pa. 0 (default) climbs to the "
+                    "surface between dives (the legacy profile). Only used "
+                    "when mission_autostart is true."
+                ),
+            ),
+            DeclareLaunchArgument(
                 "angle_rad",
                 default_value="0.6109",
                 description=(
@@ -191,11 +203,12 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument(
-                "n_resurfaces",
+                "n_oscillations",
                 default_value="1",
                 description=(
-                    "How many full descend → ascend cycles before the mission "
-                    "self-terminates. Only used when mission_autostart is true."
+                    "How many dives between the two pressures before the "
+                    "mission ends with a final ascent to the surface. Only "
+                    "used when mission_autostart is true."
                 ),
             ),
             DeclareLaunchArgument(
@@ -212,8 +225,8 @@ def generate_launch_description():
                 "hold",
                 default_value="false",
                 description=(
-                    "Informational: SAWTOOTH self-terminates after n_resurfaces "
-                    "events, but the launch keeps the stack running so the "
+                    "Informational: SAWTOOTH self-terminates after n_oscillations "
+                    "dives, but the launch keeps the stack running so the "
                     "operator can fire another mission. Documents intent."
                 ),
             ),

@@ -617,8 +617,9 @@
 
     <link name='acu_tilt_link'>
 
-      <!-- Pitch ACU weight starts in the middle -->
-      <pose>-0.32525 0 -0.0438 0 0 0</pose>
+      <!-- ACU mass is static, parked at the
+           mid-point of the former prismatic travel ([-0.1195, 0] m) -> x = -0.385. -->
+      <pose>-0.385 0 -0.0438 0 0 0</pose>
 
       <inertial>
         <!-- <pose relative_to="acu_tilt_joint">0 0 0 0 0 0</pose> -->
@@ -649,27 +650,11 @@
       </visual>
     </link>
 
-    <joint name='acu_tilt_joint' type='prismatic'>
-      <!-- Updated according to spreadsheet on 22.04. -->
+    <joint name='acu_tilt_joint' type='fixed'>
+      <!-- ACU pitch joint fixed at the mid-travel pose. -->
       <pose>-0.385 0 -0.0438 0 0 0</pose>
       <parent>base_link</parent>
       <child>acu_tilt_link</child>
-      <axis>
-        <xyz>1 0 0</xyz>
-        <!-- <dynamics>
-          <damping>20</damping>
-          <friction>5</friction>
-        </dynamics> -->
-        <limit>
-          <!-- Limits in the joints own coordinate system. Range is
-               [-0.1195, 0] m: lower < upper as Gazebo expects, with the
-               extended position at -0.1195 and the closed position at 0. -->
-          <lower>-0.1195</lower> <!-- Minimum position (in meters) -->
-          <upper>0</upper>       <!-- Maximum position (in meters) -->
-          <effort>10000.0</effort> <!-- Maximum effort (optional, in newton-meters) -->
-          <velocity>0.011</velocity> <!-- Maximum velocity (optional, in meters/second) -->
-        </limit>
-      </axis>
     </joint>
 
     <!-- ROLL ACU -->
@@ -713,61 +698,12 @@
 
     </link>
 
-    <joint name='acu_roll_joint' type='revolute'>
-      <!-- Updated according to spreadsheet on 22.04. -->
+    <joint name='acu_roll_joint' type='fixed'>
+      <!-- ACU roll joint fixed at the neutral (0 rad) pose. -->
       <pose>-0.428 0 0.034 0 0 0</pose> <!--Where the pivot is-->
       <parent>base_link</parent>
       <child>acu_roll_link</child>
-      <axis>
-        <xyz>1 0 0</xyz>
-        <limit>
-          <lower>-0.5236</lower> <!-- Minimum position (in radians) -->
-          <upper>0.5236</upper>  <!-- Maximum position (in radians) -->
-          <effort>10000.0</effort> <!-- Maximum effort (optional, in newton-meters) -->
-          <velocity>0.022</velocity> <!-- Maximum velocity (optional, in meters/second) -->
-        </limit>
-      </axis>
     </joint>
-
-    <!-- ACU pitch (prismatic, 1.83 kg, range [-0.1195, 0] m).
-         <topic> is mandatory here: the plugin's default
-         "/model/<m>/joint/<j>/0/cmd_pos" has a path segment ("0") that
-         starts with a digit, which ROS 2 topic-name validation rejects,
-         so parameter_bridge cannot bridge it. The SDF therefore spells
-         out the actual contract topic; this is not a "rebind for the
-         bridge", it is the SDF *declaring* what name to use because
-         the plugin default is unreachable from ROS.
-         Gains tuned for the prismatic mass: defaults of p=1/i=0.1/d=0.01
-         produce ~0.05 N for a 50 mm error, which is not enough to
-         drive the joint within reasonable settling time. cmd_max/min
-         clamp to the SDF effort limit. -->
-    <plugin
-      filename="gz-sim-joint-position-controller-system"
-      name="gz::sim::systems::JointPositionController">
-      <joint_name>acu_tilt_joint</joint_name>
-      <topic>/model/glider_nautilus/joint/acu_tilt_joint/cmd_pos</topic>
-      <p_gain>30000</p_gain>
-      <i_gain>0</i_gain>
-      <d_gain>3000</d_gain>
-      <!-- cmd_max/min must match (or stay below) the SDF joint <effort>
-           cap above. Wave forcing at z=-3 spawn pushes ~1000 N on the
-           mass-shifter axis, so we need substantially more headroom to
-           hold a steady-state position against it. -->
-      <cmd_max>10000</cmd_max>
-      <cmd_min>-10000</cmd_min>
-    </plugin>
-
-    <plugin
-      filename="gz-sim-joint-position-controller-system"
-      name="gz::sim::systems::JointPositionController">
-      <joint_name>acu_roll_joint</joint_name>
-      <topic>/model/glider_nautilus/joint/acu_roll_joint/cmd_pos</topic>
-      <p_gain>50</p_gain>
-      <i_gain>0</i_gain>
-      <d_gain>5</d_gain>
-      <cmd_max>10000</cmd_max>
-      <cmd_min>-10000</cmd_min>
-    </plugin>
 
     <plugin
       filename="gz-sim-linearbatteryplugin-system"

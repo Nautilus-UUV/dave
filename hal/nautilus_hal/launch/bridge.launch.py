@@ -34,7 +34,6 @@ def _default_scenario_path() -> str:
 def _wire_bridges(context, *_args, **_kwargs):
     # Loaded inside OpaqueFunction so LaunchConfiguration is resolvable.
     from py_pkg.scenarios.compile import (
-        params_for_acu_bridge,
         params_for_bcu_bridge,
         params_for_external_sensor_bridge,
         params_for_imu_bridge,
@@ -67,13 +66,6 @@ def _wire_bridges(context, *_args, **_kwargs):
             output="screen",
             parameters=[params_for_imu_bridge(rig)],
         ),
-        Node(
-            package="nautilus_hal",
-            executable="acu_sim_bridge",
-            name="nautilus_acu_bridge",
-            output="screen",
-            parameters=[params_for_acu_bridge(rig)],
-        ),
     ]
 
 
@@ -103,15 +95,12 @@ def _maybe_record(context, *_args, **_kwargs):
         bag_path = "/".join(parts)
 
     # Ground-truth odometry comes straight off Gazebo via the parameter
-    # bridge in dave_robot_models; the /sim/{model}/acu/*_position_* pair
-    # is published by acu_sim_bridge as the joint-state GT counterpart.
+    # bridge in dave_robot_models.
     from py_pkg.scenarios.loader import load_scenario
 
     scenario = load_scenario(LaunchConfiguration("scenario").perform(context))
     model_name = scenario.rig.sim.model_name
     gt_odom_topic = f"/model/{model_name}/odometry"
-    gt_acu_pitch_topic = f"/sim/{model_name}/acu/pitch_position_m"
-    gt_acu_roll_topic = f"/sim/{model_name}/acu/roll_position_rad"
 
     # Every recorded topic is funnelled through a record_throttle node so
     # the bag has a single uniform sample rate, independent of the live
@@ -133,8 +122,6 @@ def _maybe_record(context, *_args, **_kwargs):
         ("/position/target", "geometry_msgs/msg/Pose"),
         ("/position/estimation", "geometry_msgs/msg/Pose"),
         (gt_odom_topic, "nav_msgs/msg/Odometry"),
-        (gt_acu_pitch_topic, "std_msgs/msg/Float64"),
-        (gt_acu_roll_topic, "std_msgs/msg/Float64"),
     ]
 
     throttle_nodes = []

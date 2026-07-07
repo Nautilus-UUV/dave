@@ -66,7 +66,7 @@ def _build_robot_launch(context, *_args, **_kwargs):
                 ]
             ),
             launch_arguments={
-                "z": "-5",
+                "z": LaunchConfiguration("z").perform(context),
                 "roll": "3.141592653589793",
                 "yaw": "1.5707963267948966",
                 "namespace": "glider_nautilus",
@@ -209,6 +209,15 @@ def generate_launch_description():
                     "How many dives between the two pressures before the "
                     "mission ends with a final ascent to the surface. Only "
                     "used when mission_autostart is true."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "z",
+                default_value="-5",
+                description=(
+                    "Spawn depth in Gazebo world Z (positive up). -5 (default) "
+                    "preserves the historical mid-column spawn; sweeps matching "
+                    "surface-launched lake dives pass e.g. -1.0."
                 ),
             ),
             DeclareLaunchArgument(

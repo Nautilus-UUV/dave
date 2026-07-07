@@ -117,7 +117,12 @@
       filename="gz-sim-buoyancy-system"
       name="gz::sim::systems::Buoyancy">
       <graded_buoyancy>
-        <default_density>1025</default_density>
+        <!-- Fresh water: static hull buoyancy calibrated against the
+             2026-06-24 lake test. For a sea-water run change this line
+             AND the scenario's rig.hydrodynamics.fluid_density (which
+             drives the model-side BuoyancyEngine / Hydrodynamics /
+             LiftDrag densities) together — they must agree. -->
+        <default_density>1000</default_density>
         <density_change>
           <above_depth>0</above_depth>
           <density>1</density>

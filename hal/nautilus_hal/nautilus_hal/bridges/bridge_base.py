@@ -13,6 +13,8 @@ Centralising the SIGINT-tolerant spin loop here is what
 from typing import Type
 
 import rclpy
+from py_pkg.scenarios.spec.rig import PressureNoiseSpec
+from py_pkg.sensor_noise import GaussianQuantizedNoise, rng_from_seed
 from rclpy.exceptions import InvalidHandle
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -28,6 +30,26 @@ class SimBridgeNode(Node):
     def setup_bridges(self) -> None:
         """Subclass hook: declare parameters, publishers, subscribers, timers."""
         raise NotImplementedError
+
+    def declare_pressure_noise(
+        self, prefix: str, default: PressureNoiseSpec
+    ) -> GaussianQuantizedNoise:
+        """Declare one pressure channel's noise params, return its model.
+
+        Declares ``<prefix>_seed`` / ``<prefix>_sigma_pa`` /
+        ``<prefix>_quantization_pa`` (defaults from the spec, so bare
+        ``ros2 run`` behaves like nominal; the scenario compiler injects
+        a derived seed) and builds the ``GaussianQuantizedNoise`` the
+        bridge applies per published tick.
+        """
+        self.declare_parameter(f"{prefix}_seed", 0)
+        self.declare_parameter(f"{prefix}_sigma_pa", default.sigma_pa)
+        self.declare_parameter(f"{prefix}_quantization_pa", default.quantization_pa)
+        return GaussianQuantizedNoise(
+            sigma=self.get_parameter(f"{prefix}_sigma_pa").value,
+            quantization_step=self.get_parameter(f"{prefix}_quantization_pa").value,
+            rng=rng_from_seed(self.get_parameter(f"{prefix}_seed").value),
+        )
 
 
 def run_bridge(node_cls: Type[SimBridgeNode], args=None) -> None:

@@ -57,14 +57,14 @@ def _wire_bridges(context, *_args, **_kwargs):
             executable="external_sensor_sim_bridge",
             name="nautilus_external_sensor_bridge",
             output="screen",
-            parameters=[params_for_external_sensor_bridge(rig)],
+            parameters=[params_for_external_sensor_bridge(rig, parent_seed)],
         ),
         Node(
             package="nautilus_hal",
             executable="imu_sim_bridge",
             name="nautilus_imu_bridge",
             output="screen",
-            parameters=[params_for_imu_bridge(rig)],
+            parameters=[params_for_imu_bridge(rig, parent_seed)],
         ),
     ]
 

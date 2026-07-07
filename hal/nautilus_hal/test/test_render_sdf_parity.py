@@ -24,7 +24,6 @@ import os
 
 import pytest
 from ament_index_python.packages import get_package_share_directory
-
 from nautilus_hal.render_sdf import _render
 from py_pkg.scenarios.spec.rig import FinAeroSpec, HydrodynamicsSpec
 
@@ -61,13 +60,39 @@ def test_template_with_perturbed_spec_surfaces_in_xml():
         drag_zW=-200.0,
         added_mass_xx=7.5,
         left_fin=FinAeroSpec(cda=0.35, area=0.0725),
+        fluid_density=1012.5,
+        drag_zWabsW=-55.0,
+        trim_mass_bow=0.25,
+        trim_mass_bladder=0.125,
+        bladder_spawn_volume_m3=0.0021,
     )
     rendered = _render(spec, template)
 
-    for token in ("<zW>-200</zW>", "<xx>7.5</xx>", "<cda>0.35</cda>"):
+    for token in (
+        "<zW>-200</zW>",
+        "<xx>7.5</xx>",
+        "<cda>0.35</cda>",
+        "<zWabsW>-55</zWabsW>",
+        "<mass>0.25</mass>",
+        "<mass>0.125</mass>",
+        "<default_volume>0.0021</default_volume>",
+    ):
         assert token in rendered, f"perturbed value {token!r} missing from rendered XML"
 
-    for token in ("<zW>-162</zW>", "<xx>5.30023995</xx>"):
+    # fluid_density feeds all five density leaves: Hydrodynamics
+    # <water_density>, BuoyancyEngine <fluid_density>, 3x LiftDrag
+    # <air_density>.
+    assert rendered.count("1012.5") == 5, (
+        "fluid_density should surface in exactly 5 density leaves, found "
+        f"{rendered.count('1012.5')}"
+    )
+
+    for token in (
+        "<zW>-162</zW>",
+        "<xx>5.30023995</xx>",
+        "<zWabsW>0</zWabsW>",
+        "<default_volume>0.0022</default_volume>",
+    ):
         assert token not in rendered, (
             f"canonical default {token!r} survived in rendered XML "
             "(placeholder wired to the wrong field?)"

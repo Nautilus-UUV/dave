@@ -1,4 +1,4 @@
-from py_pkg.scenarios.spec.rig import ExternalSensorBridgeSpec, SimSpec
+from py_pkg.scenarios.spec.rig import ExternalSensorBridgeSpec, NoiseSpec, SimSpec
 from py_pkg.uuv_ros_core import UUVTopics, create_publisher_for_topic
 from sensor_msgs.msg import FluidPressure
 from std_msgs.msg import Int32
@@ -16,6 +16,10 @@ class ExternalSensorSimBridge(SimBridgeNode):
         self.declare_parameter(
             "publish_rate_hz", ExternalSensorBridgeSpec().publish_rate_hz
         )
+        # Sensor-noise model (defaults = lake-fitted NoiseSpec values: the
+        # real external channel is quantization-dominated — sub-LSB
+        # Gaussian on a 100 Pa comb).
+        self.noise = self.declare_pressure_noise("noise", NoiseSpec().external_pressure)
         self.model_name = self.get_parameter("model_name").value
         self.latest_pressure = 0
         publish_rate_hz = self.get_parameter("publish_rate_hz").value
@@ -40,8 +44,12 @@ class ExternalSensorSimBridge(SimBridgeNode):
         self.latest_pressure = sea_pressure_pa(msg.fluid_pressure)
 
     def publish_at_rate(self):
-        """Publish external sensors."""
-        pressure_msg = Int32(data=self.latest_pressure)
+        """Publish external sensors.
+
+        Noise is applied per published tick (a fresh ADC read each
+        cycle); the cached true value stays clean.
+        """
+        pressure_msg = Int32(data=self.noise.apply_int(self.latest_pressure))
         self.pressure_pub.publish(pressure_msg)
 
 

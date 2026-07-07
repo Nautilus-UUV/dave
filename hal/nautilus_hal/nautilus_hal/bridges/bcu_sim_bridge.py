@@ -1,11 +1,11 @@
-import random
-
 from py_pkg.scenarios.spec.rig import (
     BcuBridgeSpec,
     FaultInjectorSpec,
+    NoiseSpec,
     PlantSpec,
     SimSpec,
 )
+from py_pkg.sensor_noise import rng_from_seed
 from py_pkg.uuv_ros_core import (
     UUVTopics,
     create_publisher_for_topic,
@@ -41,14 +41,9 @@ class BCUSimBridge(SimBridgeNode):
             "tank_pressure_empty_pa", plant_def.tank_pressure_empty_pa
         )
         self.declare_parameter("tank_pressure_full_pa", plant_def.tank_pressure_full_pa)
-        self.declare_parameter(
-            "tank_pressure_vacuum_offset_pa", plant_def.tank_pressure_vacuum_offset_pa
-        )
         self.declare_parameter("fault_mttf_sec", fault_def.mttf_sec)
         self.declare_parameter("fault_num_levels", fault_def.num_levels)
-        # 0 = "let `random.Random()` pick" — preserves today's
-        # non-deterministic behaviour for ad-hoc sim runs. The scenario
-        # compiler injects a derived seed for MC.
+        # 0 = "let `random.Random()` pick"
         self.declare_parameter("rng_seed", 0)
         self.declare_parameter("publish_rate_hz", bridge_def.publish_rate_hz)
 
@@ -58,9 +53,6 @@ class BCUSimBridge(SimBridgeNode):
         self.bladder_max_m3 = self.get_parameter("bladder_max_m3").value
         self.tank_pressure_empty_pa = self.get_parameter("tank_pressure_empty_pa").value
         self.tank_pressure_full_pa = self.get_parameter("tank_pressure_full_pa").value
-        self.tank_pressure_vacuum_offset_pa = self.get_parameter(
-            "tank_pressure_vacuum_offset_pa"
-        ).value
         # Live bladder fill (m3), refreshed from Gazebo. Until the first echo
         # arrives we report the empty endpoint by sitting at the operating min.
         self.latest_volume_m3 = self.bladder_min_m3
@@ -74,14 +66,19 @@ class BCUSimBridge(SimBridgeNode):
         # ====================
         # Fault Injection
         # ====================
-        rng_seed = self.get_parameter("rng_seed").value
-        rng = random.Random(rng_seed) if rng_seed != 0 else None
         self.rpm_fault_injector = BCUFaultInjector(
             self,
             fault_topic="/bcu/rpm/fault",
             mttf_sec=self.get_parameter("fault_mttf_sec").value,
             num_levels=self.get_parameter("fault_num_levels").value,
-            rng=rng,
+            rng=rng_from_seed(self.get_parameter("rng_seed").value),
+        )
+
+        # ====================
+        # Tank-pressure sensor noise
+        # ====================
+        self.tank_noise = self.declare_pressure_noise(
+            "tank_noise", NoiseSpec().tank_pressure
         )
 
         # ====================
@@ -96,14 +93,6 @@ class BCUSimBridge(SimBridgeNode):
         # ====================
         # Actuator feedback ("ping back")
         # ====================
-        # There is no sim source for valve state or pump RPM (the SDF has no
-        # valve joints or pump model), so feedback is a steady echo of the
-        # latest commanded state, mirroring the synthetic flow-rate / tank-
-        # pressure pattern. Published from publish_at_rate so they keep beating
-        # even when no command is arriving — that's what the liveness watchdog
-        # keys off. RPM echoes the fault-adjusted effective value so feedback
-        # diverges from command under an injected fault; valves echo the latest
-        # commanded bitmask, which the bridge otherwise ignores.
         self._last_rpm = 0
         self._last_valves = 0
         self.valves_sub = create_subscription_for_topic(
@@ -120,10 +109,7 @@ class BCUSimBridge(SimBridgeNode):
         # BCU pressure / volume telemetry
         # ==============
         # Gazebo's buoyancy plugin only exposes bladder *volume*, so the tank
-        # pressure sensor is synthesized from the fill state: the dive tests'
-        # 0.7-1.5 barg gauge swing, mapped linearly across the bladder
-        # operating range (see tank_pressure_pa). Pure fill — depth never
-        # enters, so this bridge no longer subscribes to sea pressure.
+        # pressure sensor is synthesized from the fill state
         self.latest_volume_ml = 0  # bladder volume (mL), echoed from Gazebo
         publish_rate_hz = self.get_parameter("publish_rate_hz").value
         self.pub_timer = self.create_timer(1.0 / publish_rate_hz, self.publish_at_rate)
@@ -200,8 +186,8 @@ class BCUSimBridge(SimBridgeNode):
         # tank. So a full bladder (rising) means a drained tank reading the low
         # endpoint, and an empty bladder (sinking) means a tank full of oil
         # reading the high endpoint -- tank pressure runs INVERSE to bladder
-        # fill. Dive tests: ~0.7-1.5 barg end to end. Endpoints and the vacuum
-        # offset are ROS params so the curve is tunable per scenario.
+        # fill. Dive tests: ~0.7-1.5 barg end to end. Endpoints are ROS params
+        # so the curve is tunable per scenario.
         span = self.bladder_max_m3 - self.bladder_min_m3
         # Tank-fill fraction = how much oil is left in the tank = inverse of
         # bladder fill.
@@ -210,10 +196,14 @@ class BCUSimBridge(SimBridgeNode):
         p_gauge = self.tank_pressure_empty_pa + frac * (
             self.tank_pressure_full_pa - self.tank_pressure_empty_pa
         )
-        return int(p_gauge + self.tank_pressure_vacuum_offset_pa)
+        return int(p_gauge)
 
     def publish_at_rate(self):
-        self.bcu_pressure_pub.publish(Int32(data=self.tank_pressure_pa()))
+        # Tank pressure gets the sensor-noise chain per published tick
+        # (fresh ADC read);
+        self.bcu_pressure_pub.publish(
+            Int32(data=self.tank_noise.apply_int(self.tank_pressure_pa()))
+        )
         self.bcu_volume_pub.publish(Int32(data=self.latest_volume_ml))
         # Steady actuator-feedback heartbeats (echo of latest commanded state).
         self.feedback_rpm_pub.publish(Int16(data=self._last_rpm))

@@ -6,6 +6,7 @@ from py_pkg.scenarios.spec.rig import (
     PlantSpec,
     SimSpec,
 )
+from py_pkg.robot_specs import BCU_MOTOR_VALVE_MASK
 from py_pkg.sensor_noise import rng_from_seed
 from py_pkg.uuv_ros_core import (
     UUVTopics,
@@ -110,6 +111,9 @@ class BCUSimBridge(SimBridgeNode):
         # BCU RPM/flow control
         # ====================
         self.last_time = self.get_clock().now()
+        # Latest commanded RPM, held between messages (STM semantics: a
+        # command stands until superseded, silence doesn't stop the pump).
+        self._commanded_rpm = 0.0
         self.rpm_sub = create_subscription_for_topic(
             self, UUVTopics.BCU_RPM, self.rpm_callback
         )
@@ -154,46 +158,15 @@ class BCUSimBridge(SimBridgeNode):
         self.get_logger().info(f"Nautilus BCU Bridge: Listening on {UUVTopics.BCU_RPM}")
 
     def rpm_callback(self, msg):
-
-        now = self.get_clock().now()
-        dt = (now - self.last_time).nanoseconds / 1e9
-        self.last_time = now
-
-        raw_rpm = float(msg.data)
-        rpm_cmd = self.rpm_fault_injector.apply(raw_rpm)
-        # Plant transient: dead time + slew between the (fault-adjusted)
-        # command and what the shaft actually does.
-        eff_rpm = self.pump_dynamics.step(now.nanoseconds / 1e9, rpm_cmd, dt)
-        # Cache the effective rpm for the steady feedback echo — the real
-        # STM reports shaft speed, so the echo shows the spin-up ramp.
-        self._last_rpm = int(round(eff_rpm))
-
-        # rpm -> rps -> total revs in dt -> volume change
-        rps = eff_rpm / 60.0
-
-        # Only integrate + push to Gazebo once we've synced to its SDF-
-        # initialized bladder volume; otherwise we'd overwrite the initial
-        # state. Flow-rate feedback below stays open-loop and fires regardless.
-        if self.current_volume is not None:
-            delta_vol = rps * self.volume_per_rev_m3 * dt
-
-            self.current_volume += delta_vol
-            self.current_volume = max(
-                self.bladder_min_m3, min(self.current_volume, self.bladder_max_m3)
-            )
-
-            out_msg = Float64()
-            out_msg.data = self.current_volume
-            self.sim_volume_pub.publish(out_msg)
-
-        # Mock Flow Rate feedback (m3/s)
-        flow_msg = Float32()
-        flow_msg.data = rps * self.volume_per_rev_m3
-        self.flow_pub.publish(flow_msg)
+        # Cache only — the plant steps on the publish timer, so the
+        # transient keeps evolving after the last message (regression:
+        # test_bcu_bridge_feedback_decay).
+        self._commanded_rpm = float(msg.data)
 
     def valves_callback(self, msg):
-        # Cache the commanded valve bitmask (bit0=v1, bit1=v2) for the steady
-        # feedback echo. The bridge has no other use for valve commands today.
+        # Cache the commanded valve bitmask (bit0=valve2/motor way,
+        # bit1=valve1/free way — see robot_specs) for the steady feedback
+        # echo and the transfer gate in publish_at_rate.
         self._last_valves = int(msg.data)
 
     def sim_bcu_volume_callback(self, msg):
@@ -218,14 +191,64 @@ class BCUSimBridge(SimBridgeNode):
         # params, resolved once into self._tank_pressure at startup.
         return int(self._tank_pressure(self.latest_volume_m3))
 
+    def _step_plant(self):
+        # Advance the plant every timer tick against the held command:
+        # fault scaling, the dead-time/slew transient, the volume
+        # integral, and the flow echo all keep evolving (spin-up AND
+        # spin-down) between and after command messages.
+        now = self.get_clock().now()
+        dt = (now - self.last_time).nanoseconds / 1e9
+        self.last_time = now
+
+        rpm_cmd = self.rpm_fault_injector.apply(self._commanded_rpm)
+        # Plant transient: dead time + slew between the (fault-adjusted)
+        # command and what the shaft actually does.
+        eff_rpm = self.pump_dynamics.step(now.nanoseconds / 1e9, rpm_cmd, dt)
+        # Effective rpm for the feedback echo — the real STM reports
+        # shaft speed, so the echo shows the spin-up/spin-down ramps.
+        self._last_rpm = int(round(eff_rpm))
+
+        # Hydraulic gate: the pump only carries flow through valve 2 (the
+        # motor way). Closed valve = deadhead — the shaft still spins (the
+        # feedback echo stays live) but no oil moves, like hardware. Valve 1
+        # (the passive free/bypass way) is NOT modeled — a plant no-op in
+        # sim. rpm -> rps -> total revs in dt -> volume change.
+        motor_open = bool(self._last_valves & BCU_MOTOR_VALVE_MASK)
+        rps = (eff_rpm / 60.0) if motor_open else 0.0
+
+        # Only integrate + push to Gazebo once we've synced to its SDF-
+        # initialized bladder volume; otherwise we'd overwrite the initial
+        # state. Flow-rate feedback below stays open-loop and fires regardless.
+        if self.current_volume is not None:
+            delta_vol = rps * self.volume_per_rev_m3 * dt
+
+            self.current_volume += delta_vol
+            self.current_volume = max(
+                self.bladder_min_m3, min(self.current_volume, self.bladder_max_m3)
+            )
+
+            out_msg = Float64()
+            out_msg.data = self.current_volume
+            self.sim_volume_pub.publish(out_msg)
+
+        # Mock Flow Rate feedback (m3/s)
+        flow_msg = Float32()
+        flow_msg.data = rps * self.volume_per_rev_m3
+        self.flow_pub.publish(flow_msg)
+
     def publish_at_rate(self):
+        # The publish timer doubles as the plant clock (see
+        # BcuBridgeSpec.publish_rate_hz): step the plant, then publish
+        # telemetry from the fresh state.
+        self._step_plant()
+
         # Tank pressure gets the sensor-noise chain per published tick
         # (fresh ADC read);
         self.bcu_pressure_pub.publish(
             Int32(data=self.tank_noise.apply_int(self.tank_pressure_pa()))
         )
         self.bcu_volume_pub.publish(Int32(data=self.latest_volume_ml))
-        # Steady actuator-feedback heartbeats (echo of latest commanded state).
+        # Steady actuator-feedback heartbeats (echo of the evolving plant).
         self.feedback_rpm_pub.publish(Int16(data=self._last_rpm))
         self.feedback_valves_pub.publish(UInt8(data=self._last_valves))
 

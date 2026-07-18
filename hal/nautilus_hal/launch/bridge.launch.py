@@ -97,10 +97,18 @@ def _maybe_record(context, *_args, **_kwargs):
     # Ground-truth odometry comes straight off Gazebo via the parameter
     # bridge in dave_robot_models.
     from py_pkg.scenarios.loader import load_scenario
+    from py_pkg.uuv_ros_core import TOPIC_MESSAGE_MAP, UUVTopics
 
     scenario = load_scenario(LaunchConfiguration("scenario").perform(context))
     model_name = scenario.rig.sim.model_name
     gt_odom_topic = f"/model/{model_name}/odometry"
+
+    def _registry_entry(topic):
+        # record_throttle wants the "pkg/msg/Type" string; derive it from
+        # the registry's message class so a registry rename can't silently
+        # desync the bag from the live topics.
+        msg_cls = TOPIC_MESSAGE_MAP[topic]
+        return topic, f"{msg_cls.__module__.split('.')[0]}/msg/{msg_cls.__name__}"
 
     # Every recorded topic is funnelled through a record_throttle node so
     # the bag has a single uniform sample rate, independent of the live
@@ -110,17 +118,22 @@ def _maybe_record(context, *_args, **_kwargs):
     # intended soft-failure mode.
     record_rate_hz = 1.0
     record_topics = [
-        ("/imu", "sensor_msgs/msg/Imu"),
-        ("/imu/filtered", "sensor_msgs/msg/Imu"),
-        ("/external/pressure", "std_msgs/msg/Int32"),
-        ("/bcu/rpm", "std_msgs/msg/Int16"),
-        ("/bcu/flow_rate", "std_msgs/msg/Float32"),
-        ("/bcu/pressure", "std_msgs/msg/Int32"),
+        _registry_entry(UUVTopics.IMU),
+        _registry_entry(UUVTopics.IMU_FILTERED),
+        _registry_entry(UUVTopics.EXTERNAL_PRESSURE),
+        _registry_entry(UUVTopics.BCU_RPM),
+        _registry_entry(UUVTopics.BCU_FEEDBACK_RPM),
+        _registry_entry(UUVTopics.BCU_VALVES),
+        _registry_entry(UUVTopics.BCU_FEEDBACK_VALVES),
+        _registry_entry(UUVTopics.BCU_FLOW_RATE),
+        _registry_entry(UUVTopics.BCU_PRESSURE),
+        # Sim-only streams with no registry entry: the fault injector's
+        # debug topic and Gazebo's model-scoped ground-truth odometry.
         ("/bcu/rpm/fault", "std_msgs/msg/Int32"),
-        ("/acu/pitch", "std_msgs/msg/Int16"),
-        ("/acu/roll", "std_msgs/msg/Int16"),
-        ("/position/target", "geometry_msgs/msg/Pose"),
-        ("/position/estimation", "geometry_msgs/msg/Pose"),
+        _registry_entry(UUVTopics.ACU_PITCH),
+        _registry_entry(UUVTopics.ACU_ROLL),
+        _registry_entry(UUVTopics.POSITION_TARGET),
+        _registry_entry(UUVTopics.POSITION_ESTIMATION),
         (gt_odom_topic, "nav_msgs/msg/Odometry"),
     ]
 

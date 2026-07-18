@@ -34,6 +34,7 @@ def _default_scenario_path() -> str:
 def _wire_bridges(context, *_args, **_kwargs):
     # Loaded inside OpaqueFunction so LaunchConfiguration is resolvable.
     from py_pkg.scenarios.compile import (
+        params_for_anomaly_label,
         params_for_bcu_bridge,
         params_for_external_sensor_bridge,
         params_for_imu_bridge,
@@ -66,6 +67,15 @@ def _wire_bridges(context, *_args, **_kwargs):
             output="screen",
             parameters=[params_for_imu_bridge(rig, parent_seed)],
         ),
+        # Per-timestamp ground-truth anomaly label (Scenario.anomaly).
+        # Own node so no fault/comms gate can silence the label stream.
+        Node(
+            package="nautilus_hal",
+            executable="anomaly_label_bridge",
+            name="nautilus_anomaly_label_bridge",
+            output="screen",
+            parameters=[params_for_anomaly_label(scenario)],
+        ),
     ]
 
 
@@ -96,6 +106,7 @@ def _maybe_record(context, *_args, **_kwargs):
 
     # Ground-truth odometry comes straight off Gazebo via the parameter
     # bridge in dave_robot_models.
+    from nautilus_hal.constants import SimDebugTopics
     from py_pkg.scenarios.loader import load_scenario
     from py_pkg.uuv_ros_core import TOPIC_MESSAGE_MAP, UUVTopics
 
@@ -127,9 +138,12 @@ def _maybe_record(context, *_args, **_kwargs):
         _registry_entry(UUVTopics.BCU_FEEDBACK_VALVES),
         _registry_entry(UUVTopics.BCU_FLOW_RATE),
         _registry_entry(UUVTopics.BCU_PRESSURE),
-        # Sim-only streams with no registry entry: the fault injector's
-        # debug topic and Gazebo's model-scoped ground-truth odometry.
-        ("/bcu/rpm/fault", "std_msgs/msg/Int32"),
+        # Per-timestamp ground-truth anomaly labels (anomaly_label_bridge).
+        _registry_entry(UUVTopics.ANOMALY_LABEL),
+        # Sim-only streams with no registry entry: the BCU bridge's
+        # pump-fault effectiveness telemetry (constant Float32) and
+        # Gazebo's model-scoped ground-truth odometry.
+        (SimDebugTopics.BCU_PUMP_FAULT, "std_msgs/msg/Float32"),
         _registry_entry(UUVTopics.ACU_PITCH),
         _registry_entry(UUVTopics.ACU_ROLL),
         _registry_entry(UUVTopics.POSITION_TARGET),

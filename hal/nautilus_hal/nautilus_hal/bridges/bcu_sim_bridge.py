@@ -1,22 +1,15 @@
-from py_pkg.plant_dynamics import PumpDynamics, make_tank_pressure_map
+from py_pkg.plant_dynamics import PumpDynamics, make_tank_pressure_map, pump_flow_active
 from py_pkg.scenarios.spec.rig import (
     BcuBridgeSpec,
-    FaultInjectorSpec,
+    BcuPumpFaultSpec,
     NoiseSpec,
     PlantSpec,
     SimSpec,
 )
-from py_pkg.robot_specs import BCU_MOTOR_VALVE_MASK
-from py_pkg.sensor_noise import rng_from_seed
-from py_pkg.uuv_ros_core import (
-    UUVTopics,
-    create_publisher_for_topic,
-    create_subscription_for_topic,
-)
+from py_pkg.uuv_ros_core import UUVTopics, create_subscription_for_topic
 from std_msgs.msg import Float32, Float64, Int16, Int32, UInt8
 
-from ..constants import Conversions, SimTopics
-from ..injectors.fault_injection import BCUFaultInjector
+from ..constants import Conversions, SimDebugTopics, SimTopics
 from .bridge_base import SimBridgeNode, run_bridge
 
 
@@ -32,7 +25,7 @@ class BCUSimBridge(SimBridgeNode):
         # ====================
         sim_def = SimSpec()
         plant_def = PlantSpec()
-        fault_def = FaultInjectorSpec()
+        fault_def = BcuPumpFaultSpec()
         bridge_def = BcuBridgeSpec()
 
         self.declare_parameter("model_name", sim_def.model_name)
@@ -47,10 +40,7 @@ class BCUSimBridge(SimBridgeNode):
         self.declare_parameter("pump_slew_rpm_per_s", plant_def.pump_slew_rpm_per_s)
         self.declare_parameter("tank_map_shape", plant_def.tank_map_shape)
         self.declare_parameter("tank_air_volume_m3", plant_def.tank_air_volume_m3)
-        self.declare_parameter("fault_mttf_sec", fault_def.mttf_sec)
-        self.declare_parameter("fault_num_levels", fault_def.num_levels)
-        # 0 = "let `random.Random()` pick"
-        self.declare_parameter("rng_seed", 0)
+        self.declare_parameter("fault_effectiveness", fault_def.effectiveness)
         self.declare_parameter("publish_rate_hz", bridge_def.publish_rate_hz)
 
         self.model_name = self.get_parameter("model_name").value
@@ -90,22 +80,56 @@ class BCUSimBridge(SimBridgeNode):
         self.current_volume = None
 
         # ====================
-        # Fault Injection
+        # Fault injection (persistent, whole-run, constant severity)
         # ====================
-        self.rpm_fault_injector = BCUFaultInjector(
-            self,
-            fault_topic="/bcu/rpm/fault",
-            mttf_sec=self.get_parameter("fault_mttf_sec").value,
-            num_levels=self.get_parameter("fault_num_levels").value,
-            rng=rng_from_seed(self.get_parameter("rng_seed").value),
+        # Pump degradation: the commanded RPM is scaled by a constant
+        # effectiveness before the pump transient — no RNG, no onset, no
+        # escalation. Fail fast on a nonsensical value (same convention
+        # as make_tank_pressure_map above).
+        self.fault_effectiveness = float(
+            self.get_parameter("fault_effectiveness").value
         )
+        if not (0.0 < self.fault_effectiveness <= 1.0):
+            raise ValueError(
+                f"fault_effectiveness must be in (0, 1], got {self.fault_effectiveness}"
+            )
+        if self.fault_effectiveness != 1.0:
+            self.get_logger().warn(
+                "persistent pump fault active:"
+                f" effectiveness={self.fault_effectiveness}"
+            )
+        # Fault telemetry: the constant effectiveness, so bags stay
+        # self-describing about the actuator fault. Same topic the old
+        # ladder used (raw publisher — a sim-debug channel, deliberately
+        # outside the uuv_ros_core registry), now Float32 instead of an
+        # Int32 ladder level. Never gated (provenance must stay truthful).
+        # Run-constant, so the message is built once and re-published.
+        self.fault_pub = self.create_publisher(
+            Float32, SimDebugTopics.BCU_PUMP_FAULT, 10
+        )
+        self._fault_msg = Float32(data=self.fault_effectiveness)
 
         # ====================
-        # Tank-pressure sensor noise
+        # Tank-pressure sensor noise + persistent sensor fault
         # ====================
         self.tank_noise = self.declare_pressure_noise(
             "tank_noise", NoiseSpec().tank_pressure
         )
+        # tank_fault_kind/_magnitude/_drop_prob/_seed: bias/drift/stuck
+        # wrap the noise chain; dropout becomes a per-message gate on the
+        # /bcu/pressure publish alone (siblings keep publishing).
+        self.tank_fault, self.tank_drop = self.declare_sensor_fault(
+            "tank_", self.tank_noise
+        )
+
+        # ====================
+        # Comms fault: one shared per-message drop gate over every
+        # bridged telemetry publisher (uniform frame loss, like a
+        # degraded Pi<->STM link) — create_bridged_publisher below wires
+        # each one through it. The Gazebo-facing plant path and the
+        # fault-telemetry publisher above are deliberately NOT gated.
+        # ====================
+        self.declare_comms_drop()
 
         # ====================
         # BCU RPM/flow control
@@ -117,7 +141,7 @@ class BCUSimBridge(SimBridgeNode):
         self.rpm_sub = create_subscription_for_topic(
             self, UUVTopics.BCU_RPM, self.rpm_callback
         )
-        self.flow_pub = create_publisher_for_topic(self, UUVTopics.BCU_FLOW_RATE)
+        self.flow_pub = self.create_bridged_publisher(UUVTopics.BCU_FLOW_RATE)
 
         # ====================
         # Actuator feedback ("ping back")
@@ -127,11 +151,11 @@ class BCUSimBridge(SimBridgeNode):
         self.valves_sub = create_subscription_for_topic(
             self, UUVTopics.BCU_VALVES, self.valves_callback
         )
-        self.feedback_rpm_pub = create_publisher_for_topic(
-            self, UUVTopics.BCU_FEEDBACK_RPM
+        self.feedback_rpm_pub = self.create_bridged_publisher(
+            UUVTopics.BCU_FEEDBACK_RPM
         )
-        self.feedback_valves_pub = create_publisher_for_topic(
-            self, UUVTopics.BCU_FEEDBACK_VALVES
+        self.feedback_valves_pub = self.create_bridged_publisher(
+            UUVTopics.BCU_FEEDBACK_VALVES
         )
 
         # ==============
@@ -142,8 +166,8 @@ class BCUSimBridge(SimBridgeNode):
         self.latest_volume_ml = 0  # bladder volume (mL), echoed from Gazebo
         publish_rate_hz = self.get_parameter("publish_rate_hz").value
         self.pub_timer = self.create_timer(1.0 / publish_rate_hz, self.publish_at_rate)
-        self.bcu_pressure_pub = create_publisher_for_topic(self, UUVTopics.BCU_PRESSURE)
-        self.bcu_volume_pub = create_publisher_for_topic(self, UUVTopics.BCU_VOLUME)
+        self.bcu_pressure_pub = self.create_bridged_publisher(UUVTopics.BCU_PRESSURE)
+        self.bcu_volume_pub = self.create_bridged_publisher(UUVTopics.BCU_VOLUME)
         self.sim_current_volume_sub = self.create_subscription(
             Float64,
             SimTopics.BUOYANCY_VOLUME_STATE.format(model_name=self.model_name),
@@ -200,7 +224,7 @@ class BCUSimBridge(SimBridgeNode):
         dt = (now - self.last_time).nanoseconds / 1e9
         self.last_time = now
 
-        rpm_cmd = self.rpm_fault_injector.apply(self._commanded_rpm)
+        rpm_cmd = self._commanded_rpm * self.fault_effectiveness
         # Plant transient: dead time + slew between the (fault-adjusted)
         # command and what the shaft actually does.
         eff_rpm = self.pump_dynamics.step(now.nanoseconds / 1e9, rpm_cmd, dt)
@@ -208,13 +232,13 @@ class BCUSimBridge(SimBridgeNode):
         # shaft speed, so the echo shows the spin-up/spin-down ramps.
         self._last_rpm = int(round(eff_rpm))
 
-        # Hydraulic gate: the pump only carries flow through valve 2 (the
-        # motor way). Closed valve = deadhead — the shaft still spins (the
-        # feedback echo stays live) but no oil moves, like hardware. Valve 1
-        # (the passive free/bypass way) is NOT modeled — a plant no-op in
-        # sim. rpm -> rps -> total revs in dt -> volume change.
-        motor_open = bool(self._last_valves & BCU_MOTOR_VALVE_MASK)
-        rps = (eff_rpm / 60.0) if motor_open else 0.0
+        # Hydraulic gate (pump_flow_active): the pump only carries flow
+        # through valve 2 (the motor way). Closed valve = deadhead — the
+        # shaft still spins (the feedback echo stays live) but no oil
+        # moves, like hardware. Valve 1 (the passive free/bypass way) is
+        # NOT modeled — a plant no-op in sim. rpm -> rps -> total revs
+        # in dt -> volume change.
+        rps = (eff_rpm / 60.0) if pump_flow_active(eff_rpm, self._last_valves) else 0.0
 
         # Only integrate + push to Gazebo once we've synced to its SDF-
         # initialized bladder volume; otherwise we'd overwrite the initial
@@ -242,15 +266,26 @@ class BCUSimBridge(SimBridgeNode):
         # telemetry from the fresh state.
         self._step_plant()
 
-        # Tank pressure gets the sensor-noise chain per published tick
-        # (fresh ADC read);
-        self.bcu_pressure_pub.publish(
-            Int32(data=self.tank_noise.apply_int(self.tank_pressure_pa()))
-        )
+        # Tank pressure gets the persistent-fault + sensor-noise chain
+        # per published tick (fresh ADC read). A sensor dropout fault
+        # suppresses only this stream's publish; the siblings below keep
+        # their cadence (which is what distinguishes dropout from a
+        # comms fault at the bridge level).
+        if not self.tank_drop.should_drop():
+            self.bcu_pressure_pub.publish(
+                Int32(
+                    data=self.tank_fault.sample_int(
+                        self.tank_pressure_pa(),
+                        self.last_time.nanoseconds / 1e9,
+                    )
+                )
+            )
         self.bcu_volume_pub.publish(Int32(data=self.latest_volume_ml))
         # Steady actuator-feedback heartbeats (echo of the evolving plant).
         self.feedback_rpm_pub.publish(Int16(data=self._last_rpm))
         self.feedback_valves_pub.publish(UInt8(data=self._last_valves))
+        # Actuator-fault provenance (constant; never gated).
+        self.fault_pub.publish(self._fault_msg)
 
 
 def main(args=None):

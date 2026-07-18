@@ -1,9 +1,6 @@
 from py_pkg.scenarios.spec.rig import ImuNoiseSpec, SimSpec
 from py_pkg.sensor_noise import GaussianQuantizedNoise, rng_from_seed
-from py_pkg.uuv_ros_core import (
-    UUVTopics,
-    create_publisher_for_topic,
-)
+from py_pkg.uuv_ros_core import UUVTopics
 from sensor_msgs.msg import Imu
 
 from ..constants import SimTopics
@@ -41,8 +38,15 @@ class IMUSimBridge(SimBridgeNode):
         # (all-zero sigmas) the 50 Hz stream skips six no-op calls/msg.
         self.noise_active = any(n.is_active for n in self.accel_noise + self.gyro_noise)
 
+        # Comms fault only: the IMU is excluded from sensor-fault
+        # injection by design (SensorFaultsSpec is pressure-only), but a
+        # degraded link loses IMU frames like everything else. Dropping
+        # happens at message level — accel and gyro ride one hardware
+        # report, so half a message is unrepresentable.
+        self.declare_comms_drop()
+
         # One physical IMU -> one topic, just like the STM bridge.
-        self.imu_pub = create_publisher_for_topic(self, UUVTopics.IMU)
+        self.imu_pub = self.create_bridged_publisher(UUVTopics.IMU)
 
         # Gazebo IMU topic (bridged by ros_gz_bridge)
         self.sim_imu_sub = self.create_subscription(

@@ -58,3 +58,10 @@ class SimDebugTopics:
     # estimator's /position/estimation pitch/roll against this truth -- it is a
     # sim diagnostic, never a production controller input.
     GROUND_TRUTH_POSE = "/sim/{model_name}/ground_truth/pose"
+
+    # BCU pump-fault provenance (std_msgs/Float32): the constant
+    # effectiveness the bcu_sim_bridge scales commanded RPM by, so bags
+    # stay self-describing about the actuator fault. Predates the /sim/
+    # prefix — keeps the legacy name so recorded-bag streams stay
+    # comparable across sweeps. Never comms-gated.
+    BCU_PUMP_FAULT = "/bcu/rpm/fault"

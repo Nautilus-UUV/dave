@@ -1,3 +1,4 @@
+from py_pkg.plant_dynamics import PumpDynamics, make_tank_pressure_map
 from py_pkg.scenarios.spec.rig import (
     BcuBridgeSpec,
     FaultInjectorSpec,
@@ -41,6 +42,10 @@ class BCUSimBridge(SimBridgeNode):
             "tank_pressure_empty_pa", plant_def.tank_pressure_empty_pa
         )
         self.declare_parameter("tank_pressure_full_pa", plant_def.tank_pressure_full_pa)
+        self.declare_parameter("pump_response_delay_s", plant_def.pump_response_delay_s)
+        self.declare_parameter("pump_slew_rpm_per_s", plant_def.pump_slew_rpm_per_s)
+        self.declare_parameter("tank_map_shape", plant_def.tank_map_shape)
+        self.declare_parameter("tank_air_volume_m3", plant_def.tank_air_volume_m3)
         self.declare_parameter("fault_mttf_sec", fault_def.mttf_sec)
         self.declare_parameter("fault_num_levels", fault_def.num_levels)
         # 0 = "let `random.Random()` pick"
@@ -53,6 +58,26 @@ class BCUSimBridge(SimBridgeNode):
         self.bladder_max_m3 = self.get_parameter("bladder_max_m3").value
         self.tank_pressure_empty_pa = self.get_parameter("tank_pressure_empty_pa").value
         self.tank_pressure_full_pa = self.get_parameter("tank_pressure_full_pa").value
+        # Tank sensor curve, bound once at startup: shape dispatch, the
+        # free-cushion validity check, and the <= 0 = pinned-cushion
+        # convention all live in make_tank_pressure_map, which fails here
+        # (not on the first telemetry tick) for a bad configuration.
+        self._tank_pressure = make_tank_pressure_map(
+            self.get_parameter("tank_map_shape").value,
+            self.bladder_min_m3,
+            self.bladder_max_m3,
+            self.tank_pressure_empty_pa,
+            self.tank_pressure_full_pa,
+            air_volume_m3=self.get_parameter("tank_air_volume_m3").value,
+        )
+        # Commanded -> effective shaft RPM (lake-fitted dead time + slew;
+        # both <= 0 == passthrough). Plant truth, applied before the flow
+        # integral AND the feedback echo, so sim feedback shows spin-up
+        # exactly like the real STM's shaft-speed report.
+        self.pump_dynamics = PumpDynamics(
+            delay_s=self.get_parameter("pump_response_delay_s").value,
+            slew_rpm_per_s=self.get_parameter("pump_slew_rpm_per_s").value,
+        )
         # Live bladder fill (m3), refreshed from Gazebo. Until the first echo
         # arrives we report the empty endpoint by sitting at the operating min.
         self.latest_volume_m3 = self.bladder_min_m3
@@ -135,12 +160,16 @@ class BCUSimBridge(SimBridgeNode):
         self.last_time = now
 
         raw_rpm = float(msg.data)
-        rpm = self.rpm_fault_injector.apply(raw_rpm)
-        # Cache the fault-adjusted effective rpm for the steady feedback echo.
-        self._last_rpm = int(rpm)
+        rpm_cmd = self.rpm_fault_injector.apply(raw_rpm)
+        # Plant transient: dead time + slew between the (fault-adjusted)
+        # command and what the shaft actually does.
+        eff_rpm = self.pump_dynamics.step(now.nanoseconds / 1e9, rpm_cmd, dt)
+        # Cache the effective rpm for the steady feedback echo — the real
+        # STM reports shaft speed, so the echo shows the spin-up ramp.
+        self._last_rpm = int(round(eff_rpm))
 
         # rpm -> rps -> total revs in dt -> volume change
-        rps = rpm / 60.0
+        rps = eff_rpm / 60.0
 
         # Only integrate + push to Gazebo once we've synced to its SDF-
         # initialized bladder volume; otherwise we'd overwrite the initial
@@ -183,20 +212,11 @@ class BCUSimBridge(SimBridgeNode):
     def tank_pressure_pa(self) -> int:
         # Synthesize the internal tank sensor from the bladder fill. The bladder
         # is fed from the tank: oil in the external bladder is oil OUT of the
-        # tank. So a full bladder (rising) means a drained tank reading the low
-        # endpoint, and an empty bladder (sinking) means a tank full of oil
-        # reading the high endpoint -- tank pressure runs INVERSE to bladder
-        # fill. Dive tests: ~0.7-1.5 barg end to end. Endpoints are ROS params
-        # so the curve is tunable per scenario.
-        span = self.bladder_max_m3 - self.bladder_min_m3
-        # Tank-fill fraction = how much oil is left in the tank = inverse of
-        # bladder fill.
-        frac = (self.bladder_max_m3 - self.latest_volume_m3) / span if span > 0 else 0.0
-        frac = max(0.0, min(1.0, frac))
-        p_gauge = self.tank_pressure_empty_pa + frac * (
-            self.tank_pressure_full_pa - self.tank_pressure_empty_pa
-        )
-        return int(p_gauge)
+        # tank, so tank pressure runs INVERSE to bladder fill. Curve shape
+        # ("linear" legacy oil map / "gaslaw" lake-fitted air-cushion
+        # hyperbola), endpoints, and the optional free cushion volume are ROS
+        # params, resolved once into self._tank_pressure at startup.
+        return int(self._tank_pressure(self.latest_volume_m3))
 
     def publish_at_rate(self):
         # Tank pressure gets the sensor-noise chain per published tick

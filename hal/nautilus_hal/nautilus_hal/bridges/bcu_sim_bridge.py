@@ -38,6 +38,7 @@ class BCUSimBridge(SimBridgeNode):
         self.declare_parameter("tank_pressure_full_pa", plant_def.tank_pressure_full_pa)
         self.declare_parameter("pump_response_delay_s", plant_def.pump_response_delay_s)
         self.declare_parameter("pump_slew_rpm_per_s", plant_def.pump_slew_rpm_per_s)
+        self.declare_parameter("pump_overshoot_frac", plant_def.pump_overshoot_frac)
         self.declare_parameter("tank_map_shape", plant_def.tank_map_shape)
         self.declare_parameter("tank_air_volume_m3", plant_def.tank_air_volume_m3)
         self.declare_parameter("fault_effectiveness", fault_def.effectiveness)
@@ -68,6 +69,7 @@ class BCUSimBridge(SimBridgeNode):
         self.pump_dynamics = PumpDynamics(
             delay_s=self.get_parameter("pump_response_delay_s").value,
             slew_rpm_per_s=self.get_parameter("pump_slew_rpm_per_s").value,
+            overshoot_frac=self.get_parameter("pump_overshoot_frac").value,
         )
         # Live bladder fill (m3), refreshed from Gazebo. Until the first echo
         # arrives we report the empty endpoint by sitting at the operating min.
@@ -80,12 +82,13 @@ class BCUSimBridge(SimBridgeNode):
         self.current_volume = None
 
         # ====================
-        # Fault injection (persistent, whole-run, constant severity)
+        # Fault injection (persistent per-run, one drawn severity)
         # ====================
-        # Pump degradation: the commanded RPM is scaled by a constant
-        # effectiveness before the pump transient — no RNG, no onset, no
-        # escalation. Fail fast on a nonsensical value (same convention
-        # as make_tank_pressure_map above).
+        # Pump degradation: the commanded RPM is scaled by the drawn
+        # effectiveness, gated in time by the fault schedule (fault_onset_s
+        # / _shape / _ramp_s / _period_s / _duty; defaults = felt from
+        # t=0, the whole-run behavior). No RNG. Fail fast on a
+        # nonsensical value (same convention as make_tank_pressure_map).
         self.fault_effectiveness = float(
             self.get_parameter("fault_effectiveness").value
         )
@@ -98,16 +101,17 @@ class BCUSimBridge(SimBridgeNode):
                 "persistent pump fault active:"
                 f" effectiveness={self.fault_effectiveness}"
             )
-        # Fault telemetry: the constant effectiveness, so bags stay
-        # self-describing about the actuator fault. Same topic the old
-        # ladder used (raw publisher — a sim-debug channel, deliberately
-        # outside the uuv_ros_core registry), now Float32 instead of an
-        # Int32 ladder level. Never gated (provenance must stay truthful).
-        # Run-constant, so the message is built once and re-published.
+        self.fault_schedule = self.declare_fault_schedule("fault_")
+        # Fault telemetry: the effectiveness currently felt by the plant
+        # (time-varying under a schedule; pre-onset it reads 1.0 — run
+        # severity lives in the scenario/manifest, not this stream's
+        # first sample). Same topic the old ladder used (raw publisher —
+        # a sim-debug channel, deliberately outside the uuv_ros_core
+        # registry). Never gated (provenance must stay truthful).
         self.fault_pub = self.create_publisher(
             Float32, SimDebugTopics.BCU_PUMP_FAULT, 10
         )
-        self._fault_msg = Float32(data=self.fault_effectiveness)
+        self._current_effectiveness = 1.0
 
         # ====================
         # Tank-pressure sensor noise + persistent sensor fault
@@ -224,7 +228,12 @@ class BCUSimBridge(SimBridgeNode):
         dt = (now - self.last_time).nanoseconds / 1e9
         self.last_time = now
 
-        rpm_cmd = self._commanded_rpm * self.fault_effectiveness
+        # Schedule-gated effectiveness: healthy (1.0) until the onset fires,
+        # then the drawn severity, blended by the envelope m(t).
+        self._current_effectiveness = self.fault_schedule.blend(
+            1.0, self.fault_effectiveness, now.nanoseconds / 1e9
+        )
+        rpm_cmd = self._commanded_rpm * self._current_effectiveness
         # Plant transient: dead time + slew between the (fault-adjusted)
         # command and what the shaft actually does.
         eff_rpm = self.pump_dynamics.step(now.nanoseconds / 1e9, rpm_cmd, dt)
@@ -239,25 +248,32 @@ class BCUSimBridge(SimBridgeNode):
         # NOT modeled — a plant no-op in sim. rpm -> rps -> total revs
         # in dt -> volume change.
         rps = (eff_rpm / 60.0) if pump_flow_active(eff_rpm, self._last_valves) else 0.0
+        flow_m3_per_s = rps * self.volume_per_rev_m3
 
         # Only integrate + push to Gazebo once we've synced to its SDF-
         # initialized bladder volume; otherwise we'd overwrite the initial
-        # state. Flow-rate feedback below stays open-loop and fires regardless.
+        # state (the flow echo stays open-loop until the sync). Once
+        # synced, the echo reports the APPLIED flow: at a bladder rail the
+        # volume clamp freezes the fill, so the pump deadheads — shaft
+        # spinning, zero oil moved — and the flow echo must say so.
         if self.current_volume is not None:
-            delta_vol = rps * self.volume_per_rev_m3 * dt
-
-            self.current_volume += delta_vol
+            prev_volume = self.current_volume
             self.current_volume = max(
-                self.bladder_min_m3, min(self.current_volume, self.bladder_max_m3)
+                self.bladder_min_m3,
+                min(prev_volume + flow_m3_per_s * dt, self.bladder_max_m3),
             )
 
             out_msg = Float64()
             out_msg.data = self.current_volume
             self.sim_volume_pub.publish(out_msg)
 
+            flow_m3_per_s = (
+                (self.current_volume - prev_volume) / dt if dt > 0.0 else 0.0
+            )
+
         # Mock Flow Rate feedback (m3/s)
         flow_msg = Float32()
-        flow_msg.data = rps * self.volume_per_rev_m3
+        flow_msg.data = flow_m3_per_s
         self.flow_pub.publish(flow_msg)
 
     def publish_at_rate(self):
@@ -271,7 +287,7 @@ class BCUSimBridge(SimBridgeNode):
         # suppresses only this stream's publish; the siblings below keep
         # their cadence (which is what distinguishes dropout from a
         # comms fault at the bridge level).
-        if not self.tank_drop.should_drop():
+        if not self.tank_drop.should_drop(self.last_time.nanoseconds / 1e9):
             self.bcu_pressure_pub.publish(
                 Int32(
                     data=self.tank_fault.sample_int(
@@ -284,8 +300,9 @@ class BCUSimBridge(SimBridgeNode):
         # Steady actuator-feedback heartbeats (echo of the evolving plant).
         self.feedback_rpm_pub.publish(Int16(data=self._last_rpm))
         self.feedback_valves_pub.publish(UInt8(data=self._last_valves))
-        # Actuator-fault provenance (constant; never gated).
-        self.fault_pub.publish(self._fault_msg)
+        # Actuator-fault provenance (the effectiveness felt this tick;
+        # never gated).
+        self.fault_pub.publish(Float32(data=self._current_effectiveness))
 
 
 def main(args=None):

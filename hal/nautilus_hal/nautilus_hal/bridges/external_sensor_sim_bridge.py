@@ -1,5 +1,5 @@
 from py_pkg.scenarios.spec.rig import ExternalSensorBridgeSpec, NoiseSpec, SimSpec
-from py_pkg.uuv_ros_core import UUVTopics
+from py_pkg.uuv_ros_core import UUVTopics, now_s
 from sensor_msgs.msg import FluidPressure
 from std_msgs.msg import Int32
 
@@ -56,14 +56,10 @@ class ExternalSensorSimBridge(SimBridgeNode):
         A dropout fault suppresses only this publish, keeping the timer
         cadence (which distinguishes dropout from a stuck channel).
         """
-        if self.fault_drop.should_drop():
+        t_s = now_s(self)
+        if self.fault_drop.should_drop(t_s):
             return
-        pressure_msg = Int32(
-            data=self.fault_chan.sample_int(
-                self.latest_pressure,
-                self.get_clock().now().nanoseconds / 1e9,
-            )
-        )
+        pressure_msg = Int32(data=self.fault_chan.sample_int(self.latest_pressure, t_s))
         self.pressure_pub.publish(pressure_msg)
 
 

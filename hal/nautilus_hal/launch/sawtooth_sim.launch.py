@@ -143,11 +143,38 @@ def generate_launch_description():
         ),
         launch_arguments={
             "mission_autostart": LaunchConfiguration("mission_autostart"),
-            "mission_id": str(_MISSION_ID_SAWTOOTH),
+            "mission_id": LaunchConfiguration("mission_id"),
             "target_pressure_pa": LaunchConfiguration("target_pressure_pa"),
             "shallow_pressure_pa": LaunchConfiguration("shallow_pressure_pa"),
             "angle_rad": LaunchConfiguration("angle_rad"),
             "n_oscillations": LaunchConfiguration("n_oscillations"),
+            "dwell_s": LaunchConfiguration("dwell_s"),
+            "n_steps": LaunchConfiguration("n_steps"),
+            # Arms bcu_node's tank-limit clamp: the scenario's plant tank
+            # endpoints ride a latched DiveInit, the sim surrogate for
+            # the operator UI's Initialize button.
+            "scenario": scenario,
+        }.items(),
+    )
+
+    # Sim-only run watchdog (gated on watchdog:=true): ends the run at
+    # mission completion or on a floater/sinker plausibility verdict by
+    # exiting, which shuts the whole launch down — the signal sweep
+    # runners reap on. The wall-clock --per-run-timeout stays the fallback.
+    run_watchdog_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            [
+                os.path.join(
+                    FindPackageShare("py_pkg").find("py_pkg"),
+                    "launch",
+                    "run_watchdog.launch.py",
+                )
+            ]
+        ),
+        launch_arguments={
+            "watchdog": LaunchConfiguration("watchdog"),
+            "dwell_s": LaunchConfiguration("dwell_s"),
+            "bag_path": bag_path,
         }.items(),
     )
 
@@ -209,6 +236,44 @@ def generate_launch_description():
                     "How many dives between the two pressures before the "
                     "mission ends with a final ascent to the surface. Only "
                     "used when mission_autostart is true."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "mission_id",
+                default_value=str(_MISSION_ID_SAWTOOTH),
+                description=(
+                    "Mission profile to autostart (MissionId registry: "
+                    "1=SAWTOOTH the default, 3=STAIRCASE). Only used when "
+                    "mission_autostart is true."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "dwell_s",
+                default_value="0.0",
+                description=(
+                    "Seconds to station-keep at the deep extremum (SAWTOOTH) "
+                    "or per step (STAIRCASE). 0 (default) flips immediately — "
+                    "the legacy profile. Only used when mission_autostart is "
+                    "true."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "n_steps",
+                default_value="1",
+                description=(
+                    "STAIRCASE ladder steps between the surface and "
+                    "target_pressure_pa. Ignored by SAWTOOTH. Only used when "
+                    "mission_autostart is true."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "watchdog",
+                default_value="false",
+                description=(
+                    "If true, a sim-only watchdog ends the run at mission "
+                    "completion or on a floater/sinker plausibility verdict "
+                    "(writes run_verdict.json next to the bag) by shutting "
+                    "the launch down. Sweep runners pass true."
                 ),
             ),
             DeclareLaunchArgument(
@@ -283,5 +348,6 @@ def generate_launch_description():
             OpaqueFunction(function=_build_robot_launch),
             control_stack_launch,
             mission_autostart_launch,
+            run_watchdog_launch,
         ]
     )

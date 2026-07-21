@@ -18,19 +18,29 @@ without label noise:
 
   nominal    -> always False (an explicit stream in every bag —
                 downstream never infers from absence)
-  bcu_pump   -> True iff the pump is actuating: last commanded
+  bcu_pump   -> True iff the pump is actuating (last commanded
                 /bcu/rpm != 0 AND the motor valve is open — mirroring
-                the BCU bridge's flow condition. An idle degraded pump
+                the BCU bridge's flow condition; an idle degraded pump
                 produces nominal-looking data. Approximation, by
                 design: the ~1 s PumpDynamics decay tail after a
-                command drops to 0 is not extended.
-  sensor     -> True from the first sample. For drift this follows the
-                FDI convention: the label marks the fault *condition*
-                (present from t=0) even while the ramp is sub-noise,
-                so detection delay is a measured property of the
-                detector, not baked into the labels.
-  comms      -> always True (drops are absences in the other streams).
+                command drops to 0 is not extended) AND the fault's
+                schedule envelope m(t) > 0.
+  sensor     -> True iff m(t) > 0: from the onset for step shapes, and
+                only during on-windows for intermittent ones. For
+                drift this follows the FDI convention: the label marks
+                the fault *condition* (present from its onset) even
+                while the ramp is sub-noise, so detection delay is a
+                measured property of the detector, not baked into the
+                labels.
+  comms      -> always True (drops are absences in the other streams;
+                comms carries no schedule).
   biofouling -> always True (physical hull state from spawn).
+
+The labeled class's schedule arrives under ``schedule_*`` (selected by
+``compile.params_for_anomaly_label`` from the matching ``rig.faults``
+block). This node latches its schedule epoch at its own setup, a few
+seconds off the faulted bridge's — at 1 Hz recording the skew is a
+couple of samples, accepted by design.
 
 Not for hardware — labels are a property of the injected scenario.
 """
@@ -69,6 +79,10 @@ class AnomalyLabelBridge(SimBridgeNode):
         self.channel = label.channel
         self.archetype = label.archetype
 
+        # The labeled fault's onset/progression envelope (inert default
+        # for nominal/comms/biofouling).
+        self.schedule = self.declare_fault_schedule("schedule_")
+
         # bcu_pump activity gating taps the command direction (/bcu/rpm,
         # /bcu/valves are controller-published and never fault-gated), so
         # the label stays truthful even under a total comms fault.
@@ -106,19 +120,26 @@ class AnomalyLabelBridge(SimBridgeNode):
     def _on_valves(self, msg):
         self._last_valves = int(msg.data)
 
-    def _active(self) -> bool:
+    def _active(self, t_s: float) -> bool:
         if self.anomaly_class == "nominal":
             return False
         if self.anomaly_class == "bcu_pump":
             # Same hydraulic gate as the BCU bridge's flow integral,
-            # fed with the commanded rpm (see module docstring).
-            return pump_flow_active(self._last_rpm_cmd, self._last_valves)
+            # fed with the commanded rpm (see module docstring), and
+            # only once the fault's envelope has opened.
+            return (
+                pump_flow_active(self._last_rpm_cmd, self._last_valves)
+                and self.schedule.multiplier(t_s) > 0.0
+            )
+        if self.anomaly_class == "sensor":
+            return self.schedule.multiplier(t_s) > 0.0
         return True
 
     def _publish_label(self):
+        now = self.get_clock().now()
         msg = self._label_msg
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.active = self._active()
+        msg.header.stamp = now.to_msg()
+        msg.active = self._active(now.nanoseconds / 1e9)
         self.label_pub.publish(msg)
 
 

@@ -13,10 +13,20 @@ Centralising the SIGINT-tolerant spin loop here is what
 from typing import Type
 
 import rclpy
-from py_pkg.scenarios.spec.rig import CommsFaultSpec, PressureNoiseSpec, SensorFaultSpec
-from py_pkg.sensor_faults import FaultyChannel, MessageDrop, gate_publisher
+from py_pkg.scenarios.spec.rig import (
+    CommsFaultSpec,
+    FaultScheduleSpec,
+    PressureNoiseSpec,
+    SensorFaultSpec,
+)
+from py_pkg.sensor_faults import (
+    FaultSchedule,
+    FaultyChannel,
+    MessageDrop,
+    gate_publisher,
+)
 from py_pkg.sensor_noise import GaussianQuantizedNoise, rng_from_seed
-from py_pkg.uuv_ros_core import create_publisher_for_topic
+from py_pkg.uuv_ros_core import create_publisher_for_topic, now_s
 from rclpy.exceptions import InvalidHandle
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -53,33 +63,64 @@ class SimBridgeNode(Node):
             rng=rng_from_seed(self.get_parameter(f"{prefix}_seed").value),
         )
 
+    def declare_fault_schedule(self, prefix: str) -> FaultSchedule:
+        """Declare one fault's onset/progression params, return its envelope.
+
+        Declares ``<prefix>onset_s`` / ``<prefix>shape`` /
+        ``<prefix>ramp_s`` / ``<prefix>period_s`` / ``<prefix>duty``
+        (mirroring ``compile._fault_schedule_params``; defaults are the
+        inert step-at-t=0 schedule = the whole-run behavior) and latches
+        the epoch at this bridge's setup, so the onset counts from
+        bringup like the label bridge's does.
+        """
+        default = FaultScheduleSpec()
+        self.declare_parameter(f"{prefix}onset_s", default.onset_s)
+        self.declare_parameter(f"{prefix}shape", default.shape)
+        self.declare_parameter(f"{prefix}ramp_s", default.ramp_s)
+        self.declare_parameter(f"{prefix}period_s", default.period_s)
+        self.declare_parameter(f"{prefix}duty", default.duty)
+        schedule = FaultSchedule(
+            onset_s=self.get_parameter(f"{prefix}onset_s").value,
+            shape=self.get_parameter(f"{prefix}shape").value,
+            ramp_s=self.get_parameter(f"{prefix}ramp_s").value,
+            period_s=self.get_parameter(f"{prefix}period_s").value,
+            duty=self.get_parameter(f"{prefix}duty").value,
+        )
+        schedule.start(now_s(self))
+        return schedule
+
     def declare_sensor_fault(
         self, prefix: str, noise: GaussianQuantizedNoise
     ) -> tuple[FaultyChannel, MessageDrop]:
         """Declare one channel's persistent sensor-fault params, return models.
 
         Declares ``<prefix>fault_kind`` / ``<prefix>fault_magnitude`` /
-        ``<prefix>fault_drop_prob`` / ``<prefix>fault_seed`` (prefix is
-        ``"tank_"`` on the BCU bridge, ``""`` on the external bridge —
-        mirroring ``compile._sensor_fault_params``; defaults mean no
-        fault). ``kind == "dropout"`` maps to a MessageDrop consulted at
-        this channel's publish site; every other kind builds a
-        FaultyChannel composed with the channel's calibrated noise chain.
+        ``<prefix>fault_drop_prob`` / ``<prefix>fault_seed`` plus the
+        ``<prefix>fault_*`` schedule params (prefix is ``"tank_"`` on
+        the BCU bridge, ``""`` on the external bridge — mirroring
+        ``compile._sensor_fault_params``; defaults mean no fault).
+        ``kind == "dropout"`` maps to a MessageDrop consulted at this
+        channel's publish site; every other kind builds a FaultyChannel
+        composed with the channel's calibrated noise chain. The channel's
+        schedule gates when the archetype is felt.
         """
         default = SensorFaultSpec()
         self.declare_parameter(f"{prefix}fault_kind", default.kind)
         self.declare_parameter(f"{prefix}fault_magnitude", default.magnitude)
         self.declare_parameter(f"{prefix}fault_drop_prob", default.drop_prob)
         self.declare_parameter(f"{prefix}fault_seed", 0)
+        schedule = self.declare_fault_schedule(f"{prefix}fault_")
         kind = self.get_parameter(f"{prefix}fault_kind").value
         magnitude = self.get_parameter(f"{prefix}fault_magnitude").value
         drop_prob = self.get_parameter(f"{prefix}fault_drop_prob").value
         rng = rng_from_seed(self.get_parameter(f"{prefix}fault_seed").value)
         if kind == "dropout":
             channel = FaultyChannel(noise, kind="none")
-            drop = MessageDrop(p=drop_prob, rng=rng)
+            drop = MessageDrop(p=drop_prob, rng=rng, schedule=schedule)
         else:
-            channel = FaultyChannel(noise, kind=kind, magnitude=magnitude)
+            channel = FaultyChannel(
+                noise, kind=kind, magnitude=magnitude, schedule=schedule
+            )
             drop = MessageDrop()
         if kind != "none":
             self.get_logger().warn(

@@ -138,6 +138,9 @@ def generate_launch_description():
         launch_arguments={
             "mission_autostart": LaunchConfiguration("mission_autostart"),
             "mission_id": str(_MISSION_ID_SURFACE),
+            # Arms bcu_node's tank-limit clamp via a latched DiveInit
+            # carrying the scenario's plant tank endpoints.
+            "scenario": LaunchConfiguration("scenario"),
         }.items(),
     )
 

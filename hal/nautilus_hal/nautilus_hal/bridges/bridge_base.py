@@ -26,10 +26,16 @@ from py_pkg.sensor_faults import (
     gate_publisher,
 )
 from py_pkg.sensor_noise import GaussianQuantizedNoise, rng_from_seed
-from py_pkg.uuv_ros_core import create_publisher_for_topic, now_s
+from py_pkg.uuv_ros_core import (
+    UUVTopics,
+    create_publisher_for_topic,
+    create_subscription_for_topic,
+    now_s,
+)
 from rclpy.exceptions import InvalidHandle
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from std_msgs.msg import Bool
 
 
 class SimBridgeNode(Node):
@@ -37,6 +43,10 @@ class SimBridgeNode(Node):
 
     def __init__(self, node_name: str) -> None:
         super().__init__(node_name)
+        # Fault schedules declared via declare_fault_schedule, armed
+        # together on the first /command=true (see _on_command_arm).
+        self._armable_schedules: list[FaultSchedule] = []
+        self._command_arm_sub = None
         self.setup_bridges()
 
     def setup_bridges(self) -> None:
@@ -69,9 +79,13 @@ class SimBridgeNode(Node):
         Declares ``<prefix>onset_s`` / ``<prefix>shape`` /
         ``<prefix>ramp_s`` / ``<prefix>period_s`` / ``<prefix>duty``
         (mirroring ``compile._fault_schedule_params``; defaults are the
-        inert step-at-t=0 schedule = the whole-run behavior) and latches
-        the epoch at this bridge's setup, so the onset counts from
-        bringup like the label bridge's does.
+        inert step-at-t=0 schedule = the whole-run behavior). The epoch
+        is NOT latched here: every declared schedule arms on the first
+        ``/command=true`` (latched mission start), so ``onset_s`` counts
+        from the moment the run physically begins — bringup time, a
+        paused-spawned world, and slow discovery can neither eat into
+        nor fire the onset, and every bridge's epoch agrees to within
+        discovery latency of the same latched sample.
         """
         default = FaultScheduleSpec()
         self.declare_parameter(f"{prefix}onset_s", default.onset_s)
@@ -86,8 +100,30 @@ class SimBridgeNode(Node):
             period_s=self.get_parameter(f"{prefix}period_s").value,
             duty=self.get_parameter(f"{prefix}duty").value,
         )
-        schedule.start(now_s(self))
+        self._armable_schedules.append(schedule)
+        if self._command_arm_sub is None:
+            # COMMAND rides RELIABLE + TRANSIENT_LOCAL, so a bridge that
+            # finishes discovery after the operator/auto_mission start
+            # still receives the latched True and arms.
+            self._command_arm_sub = create_subscription_for_topic(
+                self, UUVTopics.COMMAND, self._on_command_arm
+            )
         return schedule
+
+    def _on_command_arm(self, msg: Bool) -> None:
+        # Arm on the first start; a later /command=false is an operator
+        # stop, not a new epoch. FaultSchedule.start is latch-once and
+        # reports whether THIS call armed it, so re-arming is impossible
+        # without inspecting anyone's epoch from out here.
+        if not msg.data:
+            return
+        t = now_s(self)
+        armed_now = sum(schedule.start(t) for schedule in self._armable_schedules)
+        if armed_now:
+            self.get_logger().info(
+                f"fault schedules armed at /command (epoch {t:.1f}s, "
+                f"{armed_now} schedule(s))"
+            )
 
     def declare_sensor_fault(
         self, prefix: str, noise: GaussianQuantizedNoise

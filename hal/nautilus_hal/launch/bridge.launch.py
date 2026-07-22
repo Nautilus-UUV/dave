@@ -106,7 +106,7 @@ def _maybe_record(context, *_args, **_kwargs):
 
     # Ground-truth odometry comes straight off Gazebo via the parameter
     # bridge in dave_robot_models.
-    from nautilus_hal.constants import SimDebugTopics
+    from nautilus_hal.constants import SimDebugTopics, throttled
     from py_pkg.scenarios.loader import load_scenario
     from py_pkg.uuv_ros_core import TOPIC_MESSAGE_MAP, UUVTopics
 
@@ -151,31 +151,28 @@ def _maybe_record(context, *_args, **_kwargs):
         (gt_odom_topic, "nav_msgs/msg/Odometry"),
     ]
 
-    throttle_nodes = []
-    throttled_topic_names = []
-    for input_topic, msg_type in record_topics:
-        output_topic = f"{input_topic}/throttled"
-        throttled_topic_names.append(output_topic)
-        # ROS node names must be valid identifiers — turn slashes into
-        # underscores and strip the leading one so /bcu/rpm/fault becomes
-        # record_throttle_bcu_rpm_fault.
-        node_suffix = input_topic.strip("/").replace("/", "_")
-        throttle_nodes.append(
-            Node(
-                package="nautilus_hal",
-                executable="record_throttle",
-                name=f"record_throttle_{node_suffix}",
-                output="screen",
-                parameters=[
-                    {
-                        "input_topic": input_topic,
-                        "output_topic": output_topic,
-                        "rate_hz": record_rate_hz,
-                        "msg_type": msg_type,
-                    }
-                ],
-            )
+    # ONE throttle process hosts every stream (parallel-array params) —
+    # per-topic processes were 17 extra DDS participants per run, enough
+    # to melt Fast DDS reader creation under a many-slot sweep stampede.
+    # The node derives its own output names from the shared `throttled`
+    # rule, so only the inputs and their types cross the parameter wire.
+    input_topics = [topic for topic, _ in record_topics]
+    throttled_topic_names = [throttled(topic) for topic in input_topics]
+    throttle_nodes = [
+        Node(
+            package="nautilus_hal",
+            executable="record_throttle",
+            name="nautilus_record_throttle",
+            output="screen",
+            parameters=[
+                {
+                    "input_topics": input_topics,
+                    "msg_types": [msg_type for _, msg_type in record_topics],
+                    "rate_hz": record_rate_hz,
+                }
+            ],
         )
+    ]
 
     # Sweep orchestrators pass `none` and compress the closed bag after each reap instead.
     bag_compression = (

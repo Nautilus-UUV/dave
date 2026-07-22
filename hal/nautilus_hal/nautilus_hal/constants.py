@@ -25,6 +25,21 @@ def sea_pressure_pa(fluid_pressure_kpa: float) -> int:
     return int(fluid_pressure_kpa * Conversions.KPA_TO_PA)
 
 
+# record_throttle republishes every recorded stream on a sibling topic
+# carrying this suffix. The rule lives here because three places must
+# agree on it exactly: bridge.launch.py (builds the recorder's topic
+# list), record_throttle (derives its outputs), and gate_launch (whose
+# recorder sentinels ARE throttled topics -- a sentinel naming a topic
+# nobody publishes makes the gate wait out its full timeout and abort
+# every run in a sweep).
+THROTTLED_SUFFIX = "/throttled"
+
+
+def throttled(topic: str) -> str:
+    """Sibling topic that ``record_throttle`` republishes ``topic`` on."""
+    return f"{topic}{THROTTLED_SUFFIX}"
+
+
 class SimTopics:
     """Templates for Gazebo/Simulation topics."""
 

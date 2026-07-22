@@ -71,13 +71,28 @@ def _build_robot_launch(context, *_args, **_kwargs):
                 "yaw": "1.5707963267948966",
                 "namespace": "glider_nautilus",
                 "world_name": "dave_ocean_waves",
-                "paused": "false",
+                # Spawn into a PAUSED world: physics must not run while
+                # nodes are still coming up (under sweep load the vehicle
+                # used to free-fall for the whole bringup). The
+                # sim_ready_gate unpauses once the graph is complete.
+                "paused": "true",
                 "gui": LaunchConfiguration("gui").perform(context),
                 "headless": LaunchConfiguration("headless").perform(context),
                 "description_file": description_file,
             }.items(),
         ),
     ]
+
+
+def _build_gate(context, *_args, **_kwargs):
+    """Compose the sim_ready_gate for this launch's actual roster.
+
+    Loaded inside an OpaqueFunction so the scenario (for model/world
+    name) and the record/watchdog/bag_path args are resolvable.
+    """
+    from nautilus_hal.gate_launch import gate_actions_from_context
+
+    return gate_actions_from_context(context)
 
 
 def generate_launch_description():
@@ -154,6 +169,9 @@ def generate_launch_description():
             # endpoints ride a latched DiveInit, the sim surrogate for
             # the operator UI's Initialize button.
             "scenario": scenario,
+            # Hold the mission until the sim_ready_gate unpauses the
+            # (paused-spawned) world and latches /sim/ready.
+            "wait_for_sim_ready": "true",
         }.items(),
     )
 
@@ -346,6 +364,11 @@ def generate_launch_description():
             ),
             bridge_launch,
             OpaqueFunction(function=_build_robot_launch),
+            # Bringup gate: verifies the whole graph (incl. the ros_gz
+            # command path and, when recording, the bag recorder) before
+            # unpausing the world and latching /sim/ready. Exits — and
+            # shuts the launch down — only on bringup failure.
+            OpaqueFunction(function=_build_gate),
             control_stack_launch,
             mission_autostart_launch,
             run_watchdog_launch,

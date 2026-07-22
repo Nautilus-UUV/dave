@@ -38,9 +38,11 @@ without label noise:
 
 The labeled class's schedule arrives under ``schedule_*`` (selected by
 ``compile.params_for_anomaly_label`` from the matching ``rig.faults``
-block). This node latches its schedule epoch at its own setup, a few
-seconds off the faulted bridge's — at 1 Hz recording the skew is a
-couple of samples, accepted by design.
+block). Like every bridge schedule it arms on the first latched
+``/command=true`` (see ``SimBridgeNode.declare_fault_schedule``), so
+this node's epoch and the faulted bridge's agree to within discovery
+latency of the same sample — and ``active`` is always False during
+bringup, before the mission physically starts.
 
 Not for hardware — labels are a property of the injected scenario.
 """

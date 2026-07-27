@@ -79,7 +79,10 @@ def sim_ready_gate_actions(
     from py_pkg.uuv_ros_core import UUVTopics
 
     required = list(_BRIDGE_NODES) + list(_CONTROL_STACK_NODES)
-    recorder_topics: list[str] = []
+    # [""] not []: launch_ros can't type an empty sequence parameter
+    # (aborts the whole launch with "got '()'"); the node declares this
+    # same sentinel default and filters out empty strings.
+    recorder_topics: list[str] = [""]
     if record:
         required.append("nautilus_record_throttle")
         # Sentinels across the recorded set: the classifier's must-have

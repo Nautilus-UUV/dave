@@ -163,7 +163,6 @@ def generate_launch_description():
             "shallow_pressure_pa": LaunchConfiguration("shallow_pressure_pa"),
             "angle_rad": LaunchConfiguration("angle_rad"),
             "n_oscillations": LaunchConfiguration("n_oscillations"),
-            "dwell_s": LaunchConfiguration("dwell_s"),
             "n_steps": LaunchConfiguration("n_steps"),
             # Arms bcu_node's tank-limit clamp: the scenario's plant tank
             # endpoints ride a latched DiveInit, the sim surrogate for
@@ -191,7 +190,6 @@ def generate_launch_description():
         ),
         launch_arguments={
             "watchdog": LaunchConfiguration("watchdog"),
-            "dwell_s": LaunchConfiguration("dwell_s"),
             "bag_path": bag_path,
         }.items(),
     )
@@ -263,16 +261,6 @@ def generate_launch_description():
                     "Mission profile to autostart (MissionId registry: "
                     "1=SAWTOOTH the default, 3=STAIRCASE). Only used when "
                     "mission_autostart is true."
-                ),
-            ),
-            DeclareLaunchArgument(
-                "dwell_s",
-                default_value="0.0",
-                description=(
-                    "Seconds to station-keep at the deep extremum (SAWTOOTH) "
-                    "or per step (STAIRCASE). 0 (default) flips immediately — "
-                    "the legacy profile. Only used when mission_autostart is "
-                    "true."
                 ),
             ),
             DeclareLaunchArgument(

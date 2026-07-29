@@ -14,6 +14,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(dave_interfaces REQUIRED)
 find_package(Protobuf REQUIRED)
 find_package(gz-msgs10 REQUIRED)
+find_package(gz-transport13 REQUIRED)
 find_package(dave_gz_world_plugins REQUIRED)
 
 # Set version variables
@@ -21,6 +22,7 @@ set(GZ_PLUGIN_VER ${gz-plugin2_VERSION_MAJOR})
 set(GZ_COMMON_VER ${gz-common5_VERSION_MAJOR})
 set(GZ_SIM_VER ${gz-sim8_VERSION_MAJOR})
 set(GZ_MSGS_VER ${gz-msgs10_VERSION_MAJOR})
+set(GZ_TRANSPORT_VER ${gz-transport13_VERSION_MAJOR})
 
 message(STATUS "Compiling against Gazebo Harmonic")
 
@@ -41,8 +43,17 @@ ament_target_dependencies(OceanCurrentModelPlugin
   dave_gz_world_plugins
 )
 
+add_library(HeaveAugmentPlugin SHARED src/HeaveAugmentPlugin.cc)
+
+target_include_directories(HeaveAugmentPlugin PRIVATE include)
+
+target_link_libraries(HeaveAugmentPlugin
+  gz-sim${GZ_SIM_VER}::gz-sim${GZ_SIM_VER}
+  gz-transport${GZ_TRANSPORT_VER}::gz-transport${GZ_TRANSPORT_VER}
+)
+
 # Install targets
-install(TARGETS OceanCurrentModelPlugin
+install(TARGETS OceanCurrentModelPlugin HeaveAugmentPlugin
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -60,6 +71,10 @@ ament_environment_hooks(
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
+
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_heave_augment_core test/test_heave_augment_core.cc)
+  target_include_directories(test_heave_augment_core PRIVATE include)
 endif()
 
 ament_package()

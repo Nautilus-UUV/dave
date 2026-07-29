@@ -146,7 +146,40 @@
       <mQabsQ>0</mQabsQ>
       <nRabsR>0</nRabsR>
     </plugin>
-    
+
+    <!-- Heave-fidelity corrections calibrated to the 2026-06-24 lake test
+         (nominal dives 2/4). zW/zWabsW MUST mirror the Hydrodynamics block
+         above — both render from the same rig.hydrodynamics values, which
+         keeps biofouling drag multipliers consistent between the two.
+         retain_fraction: fraction of heave drag retained on ascent, fitted
+         to the dive-2/4 ascent legs (the descent-anchored symmetric fit
+         over-damps ascent ~35%); 1.0 disables. peak_speed: target 5 s
+         box-smoothed entry-descent rate peak in m/s (dive 2 measured
+         0.225, dive 4 0.184); 0 disables. -->
+    <plugin
+      filename="HeaveAugmentPlugin"
+      name="dave_gz_model_plugins::HeaveAugmentPlugin">
+      <link_name>base_link</link_name>
+      <zW>-52.2</zW>
+      <zWabsW>-436.7</zWabsW>
+      <ascent_drag_relief>
+        <retain_fraction>0.66</retain_fraction>
+        <min_ascent_speed>0.01</min_ascent_speed>
+      </ascent_drag_relief>
+      <entry_momentum>
+        <peak_speed>0.205</peak_speed>
+        <rise_time>20</rise_time>
+        <decay_time>25</decay_time>
+        <trigger_depth>0.3</trigger_depth>
+        <trigger_speed>0.03</trigger_speed>
+        <trigger_hold>2</trigger_hold>
+        <rearm_speed>0.01</rearm_speed>
+        <rearm_hold>5</rearm_hold>
+        <servo_gain>1000</servo_gain>
+        <max_force>60</max_force>
+      </entry_momentum>
+    </plugin>
+
     <!--              -->
     <!-- TRIMMING BOW -->
     <!--              -->

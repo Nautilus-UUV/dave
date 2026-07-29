@@ -52,6 +52,12 @@ class SimTopics:
     # dave_robot_models/config/glider_nautilus/robot_config.py:16.
     # Sim-only — production controllers must not depend on this.
     ODOMETRY = "/model/{model_name}/odometry"
+    # gz-side (NOT ros_gz-bridged) control on HeaveAugmentPlugin: Boolean
+    # true freezes the entry-momentum trigger. Published by sim_ready_gate
+    # around its physics-liveness probe, whose deliberate sink would
+    # otherwise fire the leg-entry servo. Deliberately outside
+    # uuv_ros_core — same rationale as every other SimTopics entry.
+    HEAVE_ENTRY_SUPPRESS = "/model/{model_name}/heave_augment/entry_suppress"
 
 
 class SimDebugTopics:

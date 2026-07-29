@@ -25,7 +25,12 @@ import os
 import pytest
 from ament_index_python.packages import get_package_share_directory
 from nautilus_hal.render_sdf import _render
-from py_pkg.scenarios.spec.rig import FinAeroSpec, HydrodynamicsSpec
+from py_pkg.scenarios.spec.rig import (
+    AscentDragReliefSpec,
+    EntryMomentumSpec,
+    FinAeroSpec,
+    HydrodynamicsSpec,
+)
 
 
 def _model_dir() -> str:
@@ -65,19 +70,31 @@ def test_template_with_perturbed_spec_surfaces_in_xml():
         trim_mass_bow=0.25,
         trim_mass_bladder=0.125,
         bladder_spawn_volume_m3=0.0021,
+        ascent_relief=AscentDragReliefSpec(retain_fraction=0.5),
+        entry=EntryMomentumSpec(peak_speed_mps=0.31),
     )
     rendered = _render(spec, template)
 
     for token in (
-        "<zW>-200</zW>",
         "<xx>7.5</xx>",
         "<cda>0.35</cda>",
-        "<zWabsW>-55</zWabsW>",
         "<mass>0.25</mass>",
         "<mass>0.125</mass>",
         "<default_volume>0.0021</default_volume>",
+        "<retain_fraction>0.5</retain_fraction>",
+        "<peak_speed>0.31</peak_speed>",
     ):
         assert token in rendered, f"perturbed value {token!r} missing from rendered XML"
+
+    # drag_zW / drag_zWabsW feed BOTH the Hydrodynamics block and the
+    # HeaveAugmentPlugin mirror leaves — that shared render variable is
+    # what keeps biofouling drag multipliers consistent between the two
+    # plugins, so lock the count.
+    for token in ("<zW>-200</zW>", "<zWabsW>-55</zWabsW>"):
+        assert rendered.count(token) == 2, (
+            f"{token!r} should appear in exactly 2 plugin blocks "
+            f"(Hydrodynamics + HeaveAugment), found {rendered.count(token)}"
+        )
 
     # fluid_density feeds all five density leaves: Hydrodynamics
     # <water_density>, BuoyancyEngine <fluid_density>, 3x LiftDrag

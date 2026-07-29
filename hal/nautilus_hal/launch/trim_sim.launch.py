@@ -32,6 +32,8 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.substitutions import FindPackageShare
 
+from nautilus_hal.gate_launch import physics_probe_launch_argument
+
 _MISSION_ID_TRIM = 0
 
 
@@ -214,6 +216,7 @@ def generate_launch_description():
                 default_value="false",
                 description="If true, also record HAL topics to an MCAP rosbag.",
             ),
+            physics_probe_launch_argument(),
             DeclareLaunchArgument(
                 "run_id",
                 default_value="trim",

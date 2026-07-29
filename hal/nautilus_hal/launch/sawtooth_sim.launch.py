@@ -37,6 +37,8 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.substitutions import FindPackageShare
 
+from nautilus_hal.gate_launch import physics_probe_launch_argument
+
 
 _MISSION_ID_SAWTOOTH = 1
 
@@ -282,6 +284,7 @@ def generate_launch_description():
                     "the launch down. Sweep runners pass true."
                 ),
             ),
+            physics_probe_launch_argument(),
             DeclareLaunchArgument(
                 "z",
                 default_value="-5",

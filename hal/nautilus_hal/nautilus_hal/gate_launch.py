@@ -13,10 +13,29 @@ writes first).
 
 from pathlib import Path
 
-from launch.actions import EmitEvent, RegisterEventHandler
+from launch.actions import DeclareLaunchArgument, EmitEvent, RegisterEventHandler
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch_ros.actions import Node
+
+
+def physics_probe_launch_argument() -> DeclareLaunchArgument:
+    """The shared ``physics_probe`` argument declaration for the ``*_sim``
+    launches — one canonical name/default/description so the three copies
+    cannot drift (same motive as ``gate_actions_from_context`` itself)."""
+    return DeclareLaunchArgument(
+        "physics_probe",
+        default_value="false",
+        description=(
+            "If true, sim_ready_gate proves the buoyancy force path is "
+            "alive (commanded sink + self-restore at the surface float) "
+            "before latching /sim/ready, aborting the run (abort_init) if "
+            "the hull never responds — the v3 frozen-init race. run_sweep "
+            "injects true into every sweep run; interactive runs default "
+            "off (a z=-5 spawn adds a long quiescence wait before the "
+            "probe). Design record: nautilus_hal/sim_ready_gate.py."
+        ),
+    )
 
 # Node names composed by bridge.launch.py.
 _BRIDGE_NODES = [
@@ -68,6 +87,19 @@ def sim_ready_gate_actions(
     # doesn't send the unpause to a nonexistent service path.
     world_name: str,
     ready_timeout_s: float = _DEFAULT_READY_TIMEOUT_S,
+    # Physics-liveness probe (sink-and-restore before latching /sim/ready).
+    # Default OFF at every layer: the probe exists for unattended sweeps
+    # (run_sweep injects `physics_probe:=true` into every run), while an
+    # interactive z=-5 spawn would pay minutes of ascent+quiescence before
+    # the mission could start, and the Tier-3 drivers that kick missions on
+    # IMU-flow (not /sim/ready) would collide with the probe's restore.
+    probe_enabled: bool = False,
+    # Scenario-coupled probe knobs (see gate_actions_from_context, which
+    # derives them from the loaded scenario so a sweep that samples the
+    # bladder interval or the bridge rate cannot silently invalidate the
+    # probe's floor-clamp / topic-contention margins).
+    probe_floor_m3: float = 1.0e-3,
+    probe_pub_rate_hz: float = 50.0,
 ) -> list:
     """Gate node + failure handler for one sim launch.
 
@@ -116,6 +148,9 @@ def sim_ready_gate_actions(
                 "recorder_topics": recorder_topics,
                 "verdict_path": verdict_path,
                 "ready_timeout_s": float(ready_timeout_s),
+                "probe_enabled": bool(probe_enabled),
+                "probe_floor_m3": float(probe_floor_m3),
+                "probe_pub_rate_hz": float(probe_pub_rate_hz),
             }
         ],
     )
@@ -152,4 +187,13 @@ def gate_actions_from_context(context) -> list:
         record=cfg("record", "false").lower() == "true",
         watchdog=cfg("watchdog", "false").lower() == "true",
         bag_path=cfg("bag_path"),
+        probe_enabled=cfg("physics_probe", "false").lower() == "true",
+        # Per-run values, not nominals: the probe's floor clamp must track
+        # THIS run's bladder interval, and its publish rate must keep >=5x
+        # dominance over THIS run's bcu-bridge republish (last-received-
+        # target contention — see the gate's module docstring).
+        probe_floor_m3=scenario.rig.plant.bladder_min_m3,
+        probe_pub_rate_hz=max(
+            50.0, 5.0 * float(scenario.rig.bridges.bcu.publish_rate_hz)
+        ),
     )

@@ -36,6 +36,12 @@ ADD https://raw.githubusercontent.com/IOES-Lab/dave/$BRANCH/\
 extras/ros-jazzy-gz-harmonic-install.sh install.sh
 RUN bash install.sh
 
+# >>> ADDED ARDUPILOT AND GAZEBO ENVIRONMENT VARIABLES HERE <<<
+ENV PATH="/opt/ardusub_ws/ardupilot/Tools/autotest:/opt/ardusub_ws/ardupilot/build/sitl/bin:$PATH"
+ENV GEOGRAPHICLIB_GEOID_PATH="/usr/share/GeographicLib/geoids"
+ENV GZ_SIM_SYSTEM_PLUGIN_PATH="/opt/ardusub_ws/ardupilot_gazebo/build:$GZ_SIM_SYSTEM_PLUGIN_PATH"
+ENV GZ_SIM_RESOURCE_PATH="/opt/ardusub_ws/ardupilot_gazebo/models:/opt/ardusub_ws/ardupilot_gazebo/worlds:$GZ_SIM_RESOURCE_PATH"
+
 # Install QGroundControl
 RUN mkdir -p /opt/QGC && cd /opt/QGC && wget -O /opt/QGC/QGroundControl-x86_64.AppImage \
     "https://d176tv9ibo4jno.cloudfront.net/latest/QGroundControl-x86_64.AppImage" && \

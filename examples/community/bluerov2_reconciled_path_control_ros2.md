@@ -1,8 +1,15 @@
 # External BlueROV2 Direct-Thruster Path Controller
 
-This note points to an external ROS 2 BlueROV2 path-following controller package for DAVE/Gazebo:
+This note points to a community-maintained ROS 2 BlueROV2 path-following controller package
+for DAVE / Gazebo:
 
-https://github.com/drwa92/bluerov2_reconciled_path_control_ros2
+[BlueROV2 reconciled path control](https://github.com/drwa92/bluerov2_reconciled_path_control_ros2)
+
+> [!NOTE]
+> This package is developed and released outside DAVE. ROS 2 Jazzy startup and package
+> discovery fixes found during DAVE validation are tracked in the
+> [external compatibility PR](https://github.com/drwa92/bluerov2_reconciled_path_control_ros2/pull/1).
+> Check that PR before following the external project's quick-start instructions.
 
 The package provides:
 
@@ -28,10 +35,15 @@ ros2 launch dave_demos dave_robot.launch.py \
 ros2 launch bluerov2_path_control path_controller.launch.py \
   model_name:=bluerov2 \
   use_bridge:=true
+```
+
+With the compatibility fixes applied, a DAVE smoke test confirmed Odometry input, an accepted
+`GoTo` request, and non-zero commands on all six thruster topics.
+
 The package is maintained externally by Waseem Akram at MARVIS LAB:
 
-https://drwa92.github.io/marvis-lab/
+[MARVIS LAB](https://drwa92.github.io/marvis-lab/)
 
 Project webpage:
 
-https://drwa92.github.io/bluerov2_reconciled_path_control_ros2/
+[BlueROV2 controller project page](https://drwa92.github.io/bluerov2_reconciled_path_control_ros2/)

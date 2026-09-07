@@ -379,11 +379,8 @@ void UsblTransponder::commandRosCallback(const dave_interfaces::msg::UsblCommand
 void UsblTransponder::PostUpdate(
   const gz::sim::UpdateInfo & _info, const gz::sim::EntityComponentManager & _ecm)
 {
-  if (!_info.paused)
-  {
-    // gzdbg << "dave_gz_sensor_plugins::UsblTransponder::PostUpdate" << std::endl;
-    rclcpp::spin_some(this->ros_node_);
-  }
+  // ROS callbacks are wall-time events and must remain responsive while paused.
+  rclcpp::spin_some(this->ros_node_);
 }
 
 }  // namespace dave_gz_sensor_plugins

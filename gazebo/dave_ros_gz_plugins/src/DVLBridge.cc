@@ -86,6 +86,21 @@ void DVLBridge::receiveGazeboCallback(const gz::msgs::DVLVelocityTracking & msg)
   auto dvl_msg = dave_interfaces::msg::DVL();
   dvl_msg.header.stamp.sec = msg.header().stamp().sec();
   dvl_msg.header.stamp.nanosec = msg.header().stamp().nsec();
+  for (int i = 0; i < msg.header().data_size(); ++i)
+  {
+    const auto & entry = msg.header().data(i);
+    if (entry.key() == "frame_id" && entry.value_size() > 0)
+    {
+      dvl_msg.header.frame_id = entry.value(0);
+      std::string::size_type pos = 0;
+      while ((pos = dvl_msg.header.frame_id.find("::", pos)) != std::string::npos)
+      {
+        dvl_msg.header.frame_id.replace(pos, 2, "/");
+        ++pos;
+      }
+      break;
+    }
+  }
 
   std::string dvl_type;
   std::string target_type;

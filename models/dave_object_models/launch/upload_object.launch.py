@@ -152,6 +152,9 @@ def generate_launch_description():
         )
     ]
 
-    return LaunchDescription(
-        args + [OpaqueFunction(function=validate_description)] + nodes + event_handlers
+    validate_object_description = OpaqueFunction(
+        function=validate_description,
+        condition=IfCondition(gui),
     )
+
+    return LaunchDescription(args + [validate_object_description] + nodes + event_handlers)

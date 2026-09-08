@@ -1,10 +1,28 @@
+import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, RegisterEventHandler, LogInfo
+from launch.actions import DeclareLaunchArgument, RegisterEventHandler, LogInfo, OpaqueFunction
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch.conditions import IfCondition
 from launch_ros.substitutions import FindPackageShare
 from launch.event_handlers import OnProcessExit
 from launch_ros.actions import Node
+
+
+def validate_description(context, *args, **kwargs):
+    namespace = LaunchConfiguration("namespace").perform(context)
+    description_file = os.path.join(
+        get_package_share_directory("dave_object_models"),
+        "description",
+        namespace,
+        "model.sdf",
+    )
+    if not os.path.isfile(description_file):
+        raise FileNotFoundError(
+            f"Object descriptor does not exist for namespace [{namespace}]: " f"{description_file}"
+        )
+    return []
 
 
 def generate_launch_description():
@@ -134,4 +152,9 @@ def generate_launch_description():
         )
     ]
 
-    return LaunchDescription(args + nodes + event_handlers)
+    validate_object_description = OpaqueFunction(
+        function=validate_description,
+        condition=IfCondition(gui),
+    )
+
+    return LaunchDescription(args + [validate_object_description] + nodes + event_handlers)

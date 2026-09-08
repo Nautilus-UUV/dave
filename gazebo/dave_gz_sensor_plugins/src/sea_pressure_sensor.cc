@@ -214,10 +214,17 @@ void SubseaPressureSensorPlugin::PostUpdate(
 {
   this->dataPtr->lastMeasurementTime = _info.simTime;
 
+  // The pressure model uses kPa internally, while both Gazebo and ROS
+  // FluidPressure messages require Pa (and Pa^2 for variance).
+  constexpr double kPaToPa = 1000.0;
+  const double pressurePa = this->dataPtr->pressure * kPaToPa;
+  const double variancePa2 =
+    this->dataPtr->noiseSigma * this->dataPtr->noiseSigma * kPaToPa * kPaToPa;
+
   // Publishing Sea_Pressure and depth estimate on gazebo topic
   gz::msgs::FluidPressure gzPressureMsg;
-  gzPressureMsg.set_pressure(this->dataPtr->pressure);
-  gzPressureMsg.set_variance(this->dataPtr->noiseSigma * this->dataPtr->noiseSigma);
+  gzPressureMsg.set_pressure(pressurePa);
+  gzPressureMsg.set_variance(variancePa2);
 
   // Publishing the pressure message
   this->dataPtr->gz_pressure_sensor_pub.Publish(gzPressureMsg);
@@ -229,8 +236,8 @@ void SubseaPressureSensorPlugin::PostUpdate(
   rosPressureMsg.header.stamp.nanosec =
     std::chrono::duration_cast<std::chrono::nanoseconds>(_info.simTime).count() %
     1000000000;  // Time in nanoseconds
-  rosPressureMsg.fluid_pressure = this->dataPtr->pressure;
-  rosPressureMsg.variance = this->dataPtr->noiseSigma * this->dataPtr->noiseSigma;
+  rosPressureMsg.fluid_pressure = pressurePa;
+  rosPressureMsg.variance = variancePa2;
   this->dataPtr->ros_pressure_sensor_pub->publish(rosPressureMsg);
 
   // publishing depth message

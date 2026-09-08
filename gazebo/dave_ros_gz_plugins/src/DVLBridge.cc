@@ -183,14 +183,30 @@ void DVLBridge::receiveGazeboCallback(const gz::msgs::DVLVelocityTracking & msg)
 void DVLBridge::PostUpdate(
   const gz::sim::UpdateInfo & _info, const gz::sim::EntityComponentManager & _ecm)
 {
-  if (!_info.paused)
+  if (_info.paused || !this->ros_node_ || !rclcpp::ok())
+  {
+    return;
+  }
+
+  try
   {
     rclcpp::spin_some(this->ros_node_);
-
-    if (_info.iterations % 1000 == 0)
+  }
+  catch (const rclcpp::exceptions::RCLError & error)
+  {
+    // SIGINT can invalidate the global context between the ok() check and
+    // temporary executor construction inside rclcpp::spin_some().
+    if (rclcpp::ok())
     {
-      gzmsg << "dave_ros_gz_plugins::DVLBridge::PostUpdate" << std::endl;
+      throw;
     }
+    gzdbg << "Skipping DVL ROS spin during shutdown: " << error.what() << std::endl;
+    return;
+  }
+
+  if (_info.iterations % 1000 == 0)
+  {
+    gzmsg << "dave_ros_gz_plugins::DVLBridge::PostUpdate" << std::endl;
   }
 }
 

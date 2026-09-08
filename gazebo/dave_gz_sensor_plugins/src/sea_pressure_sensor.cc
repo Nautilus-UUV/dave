@@ -1,5 +1,6 @@
 #include "dave_gz_sensor_plugins/sea_pressure_sensor.hh"
 #include <gz/msgs/fluid_pressure.pb.h>
+#include <algorithm>
 #include <chrono>
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <gz/math/Pose3.hh>
@@ -190,12 +191,9 @@ void SubseaPressureSensorPlugin::PreUpdate(
 {
   // Get model pose
   gz::math::Pose3d sea_pressure_sensor_pos = GetModelPose(this->dataPtr->modelEntity, _ecm);
-  double depth = std::abs(sea_pressure_sensor_pos.Z());
-  this->dataPtr->pressure = this->dataPtr->standardPressure;
-  if (depth >= 0)
-  {
-    this->dataPtr->pressure += depth * this->dataPtr->kPaPerM;
-  }
+  // DAVE worlds use ENU with the water surface at z=0.
+  const double depth = std::max(0.0, -sea_pressure_sensor_pos.Z());
+  this->dataPtr->pressure = this->dataPtr->standardPressure + depth * this->dataPtr->kPaPerM;
 
   // not adding gaussian noise for now, Future Work (TODO)
   // pressure += this->dataPtr->GetGaussianNoise(this->dataPtr->noiseAmp);

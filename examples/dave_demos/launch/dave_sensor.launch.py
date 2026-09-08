@@ -38,7 +38,7 @@ def launch_setup(context, *args, **kwargs):
     if paused.perform(context) == "false":
         gz_args.append(" -r")
     if debug.perform(context) == "true":
-        gz_args.append(f"-v {verbosity_level.perform(context)}")
+        gz_args.append(f" -v {verbosity_level.perform(context)}")
 
     gz_sim_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(

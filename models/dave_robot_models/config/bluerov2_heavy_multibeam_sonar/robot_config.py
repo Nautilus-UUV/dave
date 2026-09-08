@@ -138,6 +138,8 @@ def launch_setup(context, *args, **kwargs):
     ardusub_process = ExecuteProcess(
         cmd=[
             "ardusub",
+            "--speedup",
+            "1",
             "-w",
             "--model",
             ardusub_model,

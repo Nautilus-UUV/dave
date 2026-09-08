@@ -35,6 +35,7 @@ public:
   double saturation;
   gz::sim::EntityComponentManager * ecm = nullptr;
   std::chrono::steady_clock::duration lastMeasurementTime{0};
+  bool hasMeasurement = false;
   bool estimateDepth;
   double standardPressure = 101.325;
   double kPaPerM = 9.80638;
@@ -47,6 +48,7 @@ public:
   std::string topic;
   double noiseAmp = 0.0;
   double noiseSigma = 3.0;
+  double updateRate = 0.0;
   double inferredDepth = 0.0;
   double pressure = 0.0;
   std::string modelName;
@@ -130,6 +132,11 @@ void SubseaPressureSensorPlugin::Configure(
     this->dataPtr->kPaPerM = 9.80638;
   }
 
+  if (_sdf->HasElement("update_rate"))
+  {
+    this->dataPtr->updateRate = std::max(0.0, _sdf->Get<double>("update_rate"));
+  }
+
   // this->dataPtr->gazeboNode->Init();
   this->dataPtr->modelEntity = GetModelEntity(this->dataPtr->robotNamespace, _ecm);
 
@@ -210,7 +217,20 @@ void SubseaPressureSensorPlugin::PreUpdate(
 void SubseaPressureSensorPlugin::PostUpdate(
   const gz::sim::UpdateInfo & _info, const gz::sim::EntityComponentManager & _ecm)
 {
+  if (this->dataPtr->hasMeasurement && this->dataPtr->updateRate > 0.0)
+  {
+    const auto period = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+      std::chrono::duration<double>(1.0 / this->dataPtr->updateRate));
+    if (
+      _info.simTime >= this->dataPtr->lastMeasurementTime &&
+      _info.simTime - this->dataPtr->lastMeasurementTime < period)
+    {
+      return;
+    }
+  }
+
   this->dataPtr->lastMeasurementTime = _info.simTime;
+  this->dataPtr->hasMeasurement = true;
 
   // The pressure model uses kPa internally, while both Gazebo and ROS
   // FluidPressure messages require Pa (and Pa^2 for variance).
